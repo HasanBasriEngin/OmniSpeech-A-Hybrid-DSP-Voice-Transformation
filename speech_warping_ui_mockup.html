@@ -1,0 +1,746 @@
+
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Sora:wght@300;400;500;600&display=swap');
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg0: #0d0f12;
+    --bg1: #141720;
+    --bg2: #1c2030;
+    --bg3: #232840;
+    --accent: #6c63ff;
+    --accent2: #a78bfa;
+    --teal: #22d3b0;
+    --amber: #f59e0b;
+    --red: #f87171;
+    --text1: #e8eaf0;
+    --text2: #8b92a8;
+    --text3: #565e78;
+    --border: rgba(255,255,255,0.06);
+    --border2: rgba(255,255,255,0.12);
+    --font: 'Sora', sans-serif;
+    --mono: 'JetBrains Mono', monospace;
+  }
+
+  body { font-family: var(--font); background: var(--bg0); color: var(--text1); min-height: 100vh; }
+
+  .app { display: grid; grid-template-columns: 220px 1fr 280px; grid-template-rows: 52px 1fr; height: 100vh; min-height: 600px; }
+
+  /* TOP BAR */
+  .topbar {
+    grid-column: 1 / -1;
+    background: var(--bg1);
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 12px; padding: 0 20px;
+  }
+  .logo { display: flex; align-items: center; gap: 8px; }
+  .logo-icon {
+    width: 28px; height: 28px; border-radius: 8px;
+    background: linear-gradient(135deg, var(--accent), var(--teal));
+    display: flex; align-items: center; justify-content: center;
+    font-size: 14px;
+  }
+  .logo-text { font-size: 13px; font-weight: 600; letter-spacing: 0.04em; color: var(--text1); }
+  .logo-sub { font-size: 10px; color: var(--text3); font-family: var(--mono); }
+  .topbar-right { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+  .status-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--teal); box-shadow: 0 0 6px var(--teal); }
+  .status-text { font-size: 11px; color: var(--text3); font-family: var(--mono); }
+  .tag {
+    font-size: 10px; font-family: var(--mono); padding: 3px 8px; border-radius: 4px;
+    border: 1px solid var(--border2); color: var(--text3);
+  }
+
+  /* SIDEBAR */
+  .sidebar {
+    background: var(--bg1);
+    border-right: 1px solid var(--border);
+    padding: 16px 12px;
+    display: flex; flex-direction: column; gap: 4px; overflow-y: auto;
+  }
+  .sidebar-section { font-size: 9px; font-family: var(--mono); color: var(--text3); letter-spacing: 0.1em; text-transform: uppercase; padding: 12px 8px 6px; }
+  .nav-item {
+    display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 8px;
+    cursor: pointer; font-size: 12px; color: var(--text2);
+    transition: all 0.15s; border: 1px solid transparent;
+  }
+  .nav-item:hover { background: var(--bg2); color: var(--text1); }
+  .nav-item.active { background: rgba(108,99,255,0.15); color: var(--accent2); border-color: rgba(108,99,255,0.25); }
+  .nav-icon { width: 16px; height: 16px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+  .nav-badge { margin-left: auto; font-size: 9px; font-family: var(--mono); background: rgba(108,99,255,0.2); color: var(--accent2); padding: 1px 5px; border-radius: 3px; }
+
+  /* MODULE ICONS using SVG */
+  .icon-emotion { fill: #a78bfa; }
+  .icon-gender  { fill: var(--teal); }
+  .icon-speaker { fill: var(--amber); }
+  .icon-singing { fill: #f472b6; }
+  .icon-input   { fill: var(--text3); }
+  .icon-output  { fill: var(--text3); }
+  .icon-eval    { fill: var(--text3); }
+
+  /* MAIN CONTENT */
+  .main { background: var(--bg0); padding: 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 16px; }
+
+  /* WAVEFORM SECTION */
+  .section-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+  .section-title { font-size: 11px; font-family: var(--mono); color: var(--text3); letter-spacing: 0.08em; }
+  .section-controls { display: flex; gap: 6px; }
+  .btn-xs {
+    font-size: 10px; font-family: var(--mono); padding: 3px 10px; border-radius: 5px;
+    border: 1px solid var(--border2); color: var(--text3); background: transparent;
+    cursor: pointer; transition: all 0.15s;
+  }
+  .btn-xs:hover { background: var(--bg2); color: var(--text1); }
+  .btn-xs.active { background: rgba(108,99,255,0.2); border-color: var(--accent); color: var(--accent2); }
+
+  .card {
+    background: var(--bg1); border: 1px solid var(--border);
+    border-radius: 12px; padding: 14px 16px;
+  }
+
+  /* DROP ZONE */
+  .drop-zone {
+    border: 1.5px dashed var(--border2); border-radius: 10px;
+    padding: 20px; text-align: center; cursor: pointer;
+    transition: all 0.2s; position: relative; overflow: hidden;
+  }
+  .drop-zone:hover { border-color: var(--accent); background: rgba(108,99,255,0.05); }
+  .drop-zone-title { font-size: 13px; font-weight: 500; color: var(--text1); margin-bottom: 4px; }
+  .drop-zone-sub { font-size: 11px; color: var(--text3); font-family: var(--mono); }
+  .fmt-tags { display: flex; justify-content: center; gap: 6px; margin-top: 10px; }
+  .fmt-tag {
+    font-size: 10px; font-family: var(--mono); padding: 2px 8px; border-radius: 4px;
+    background: var(--bg2); border: 1px solid var(--border2); color: var(--text3);
+  }
+
+  /* WAVEFORM CANVAS AREA */
+  .waveform-area { position: relative; height: 88px; background: var(--bg2); border-radius: 8px; overflow: hidden; margin-top: 10px; }
+  .waveform-label { position: absolute; top: 6px; left: 10px; font-size: 9px; font-family: var(--mono); color: var(--text3); }
+  .waveform-label.right { left: auto; right: 10px; }
+  canvas.waveform { width: 100%; height: 100%; display: block; }
+
+  /* PLAYBACK BAR */
+  .playback-bar { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
+  .play-btn {
+    width: 32px; height: 32px; border-radius: 50%; border: 1px solid var(--border2);
+    background: var(--bg2); cursor: pointer; display: flex; align-items: center; justify-content: center;
+    transition: all 0.15s; flex-shrink: 0;
+  }
+  .play-btn:hover { background: rgba(108,99,255,0.2); border-color: var(--accent); }
+  .play-btn svg { fill: var(--text1); }
+  .progress-wrap { flex: 1; }
+  .progress-bg { height: 3px; background: var(--bg3); border-radius: 2px; cursor: pointer; position: relative; }
+  .progress-fill { height: 100%; width: 34%; background: linear-gradient(90deg, var(--accent), var(--teal)); border-radius: 2px; }
+  .progress-thumb { position: absolute; top: -4px; left: 34%; width: 10px; height: 10px; border-radius: 50%; background: var(--text1); transform: translateX(-50%); box-shadow: 0 0 0 2px rgba(108,99,255,0.4); }
+  .time-text { font-size: 10px; font-family: var(--mono); color: var(--text3); white-space: nowrap; }
+
+  /* PITCH GRAPH */
+  .pitch-area { height: 70px; background: var(--bg2); border-radius: 8px; overflow: hidden; position: relative; margin-top: 10px; }
+
+  /* STEP BADGES */
+  .step-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .step-badge {
+    width: 20px; height: 20px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+    font-size: 9px; font-weight: 600; font-family: var(--mono); flex-shrink: 0;
+  }
+  .step-badge.done { background: rgba(34,211,176,0.2); color: var(--teal); border: 1px solid rgba(34,211,176,0.3); }
+  .step-badge.active { background: rgba(108,99,255,0.25); color: var(--accent2); border: 1px solid rgba(108,99,255,0.4); }
+  .step-badge.idle { background: var(--bg3); color: var(--text3); border: 1px solid var(--border); }
+  .step-label { font-size: 11px; color: var(--text2); }
+  .step-label.active { color: var(--text1); font-weight: 500; }
+
+  /* RIGHT PANEL */
+  .panel {
+    background: var(--bg1); border-left: 1px solid var(--border);
+    padding: 16px 14px; overflow-y: auto; display: flex; flex-direction: column; gap: 14px;
+  }
+  .panel-title { font-size: 11px; font-family: var(--mono); color: var(--text3); letter-spacing: 0.08em; margin-bottom: 10px; }
+
+  /* MODULE SELECTOR BUTTONS */
+  .module-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  .module-btn {
+    padding: 10px 8px; border-radius: 8px; border: 1px solid var(--border);
+    background: var(--bg2); cursor: pointer; text-align: center;
+    transition: all 0.15s; display: flex; flex-direction: column; align-items: center; gap: 5px;
+  }
+  .module-btn:hover { border-color: var(--border2); background: var(--bg3); }
+  .module-btn.active-emotion { border-color: rgba(167,139,250,0.5); background: rgba(167,139,250,0.08); }
+  .module-btn.active-gender  { border-color: rgba(34,211,176,0.4); background: rgba(34,211,176,0.07); }
+  .module-btn.active-speaker { border-color: rgba(245,158,11,0.4); background: rgba(245,158,11,0.07); }
+  .module-btn.active-singing { border-color: rgba(244,114,182,0.4); background: rgba(244,114,182,0.07); }
+  .module-btn-label { font-size: 10px; font-family: var(--mono); color: var(--text3); }
+  .module-btn.active-emotion .module-btn-label { color: var(--accent2); }
+  .module-btn.active-gender  .module-btn-label { color: var(--teal); }
+
+  /* PARAMETER SLIDERS */
+  .param-row { margin-bottom: 12px; }
+  .param-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+  .param-name { font-size: 11px; color: var(--text2); }
+  .param-val { font-size: 11px; font-family: var(--mono); color: var(--accent2); }
+  input[type=range] {
+    width: 100%; -webkit-appearance: none; appearance: none;
+    height: 3px; border-radius: 2px; background: var(--bg3); outline: none; cursor: pointer;
+  }
+  input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none; appearance: none;
+    width: 12px; height: 12px; border-radius: 50%;
+    background: var(--accent2); border: 2px solid var(--bg1);
+    box-shadow: 0 0 6px rgba(167,139,250,0.5); cursor: pointer;
+  }
+  input[type=range].teal::-webkit-slider-thumb { background: var(--teal); box-shadow: 0 0 6px rgba(34,211,176,0.4); }
+  input[type=range].amber::-webkit-slider-thumb { background: var(--amber); box-shadow: 0 0 6px rgba(245,158,11,0.4); }
+
+  /* EMOTION CHIPS */
+  .chip-row { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 4px; }
+  .chip {
+    font-size: 10px; font-family: var(--mono); padding: 3px 9px; border-radius: 20px;
+    border: 1px solid var(--border); color: var(--text3); cursor: pointer; transition: all 0.15s;
+  }
+  .chip:hover { border-color: var(--border2); color: var(--text2); }
+  .chip.sel-sad      { border-color: #60a5fa; background: rgba(96,165,250,0.1); color: #60a5fa; }
+  .chip.sel-angry    { border-color: var(--red); background: rgba(248,113,113,0.1); color: var(--red); }
+  .chip.sel-excited  { border-color: var(--amber); background: rgba(245,158,11,0.1); color: var(--amber); }
+  .chip.sel-whisper  { border-color: var(--teal); background: rgba(34,211,176,0.1); color: var(--teal); }
+  .chip.sel-calm     { border-color: var(--accent2); background: rgba(167,139,250,0.1); color: var(--accent2); }
+
+  /* METRIC CARDS */
+  .metric-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  .metric-card { background: var(--bg2); border-radius: 8px; padding: 10px 12px; }
+  .metric-label { font-size: 9px; font-family: var(--mono); color: var(--text3); margin-bottom: 4px; letter-spacing: 0.06em; }
+  .metric-val { font-size: 18px; font-weight: 600; color: var(--text1); line-height: 1; }
+  .metric-unit { font-size: 10px; color: var(--text3); }
+  .metric-card.ok .metric-val { color: var(--teal); }
+  .metric-card.warn .metric-val { color: var(--amber); }
+
+  /* CONVERT BTN */
+  .convert-btn {
+    width: 100%; padding: 11px; border-radius: 10px; border: none;
+    background: linear-gradient(135deg, var(--accent), #8b5cf6);
+    color: #fff; font-size: 13px; font-weight: 600; font-family: var(--font);
+    cursor: pointer; letter-spacing: 0.02em; transition: all 0.2s;
+    box-shadow: 0 4px 16px rgba(108,99,255,0.35);
+    position: relative; overflow: hidden;
+  }
+  .convert-btn:hover { transform: translateY(-1px); box-shadow: 0 6px 20px rgba(108,99,255,0.45); }
+  .convert-btn:active { transform: scale(0.98); }
+
+  /* LOG */
+  .log-entry { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--border); }
+  .log-entry:last-child { border-bottom: none; }
+  .log-time { font-size: 10px; font-family: var(--mono); color: var(--text3); white-space: nowrap; }
+  .log-text { font-size: 11px; color: var(--text2); flex: 1; }
+  .log-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--teal); flex-shrink: 0; }
+  .log-dot.pending { background: var(--amber); }
+</style>
+
+<div class="app">
+
+  <!-- TOP BAR -->
+  <div class="topbar">
+    <div class="logo">
+      <div class="logo-icon">
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+          <path d="M7 1L7 13M1 4L7 1L13 4M1 10L7 13L13 10" stroke="#fff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </div>
+      <div>
+        <div class="logo-text">SpeechWarp</div>
+        <div class="logo-sub">v0.9 · CENG 384</div>
+      </div>
+    </div>
+    <div class="topbar-right">
+      <div class="status-dot"></div>
+      <span class="status-text">ready</span>
+      <div class="tag">CPU · 12% load</div>
+      <div class="tag">Group 18</div>
+    </div>
+  </div>
+
+  <!-- SIDEBAR -->
+  <div class="sidebar">
+    <div class="sidebar-section">Navigation</div>
+
+    <div class="nav-item active">
+      <div class="nav-icon">
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+          <rect x="1" y="4" width="12" height="7" rx="1.5" stroke="#a78bfa" stroke-width="1.2"/>
+          <path d="M4 4V3C4 2 5 1 7 1C9 1 10 2 10 3V4" stroke="#a78bfa" stroke-width="1.2"/>
+        </svg>
+      </div>
+      Workspace
+    </div>
+
+    <div class="sidebar-section">DSP Modules</div>
+
+    <div class="nav-item">
+      <div class="nav-icon">
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+          <circle cx="7" cy="7" r="5" stroke="#a78bfa" stroke-width="1.2"/>
+          <path d="M5 6.5Q7 4.5 9 6.5" stroke="#a78bfa" stroke-width="1.2" stroke-linecap="round"/>
+        </svg>
+      </div>
+      Emotion
+      <span class="nav-badge">FR10-15</span>
+    </div>
+
+    <div class="nav-item">
+      <div class="nav-icon">
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+          <path d="M3 7C3 4.8 4.8 3 7 3" stroke="#22d3b0" stroke-width="1.2" stroke-linecap="round"/>
+          <path d="M11 7C11 9.2 9.2 11 7 11" stroke="#22d3b0" stroke-width="1.2" stroke-linecap="round"/>
+          <circle cx="7" cy="7" r="2" fill="#22d3b0" fill-opacity="0.3" stroke="#22d3b0" stroke-width="1"/>
+        </svg>
+      </div>
+      Gender / Age
+      <span class="nav-badge">FR16-21</span>
+    </div>
+
+    <div class="nav-item">
+      <div class="nav-icon">
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+          <path d="M2 11L5 5L7 9L9 6L12 11" stroke="#f59e0b" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </div>
+      Speaker / Clone
+      <span class="nav-badge">FR22-28</span>
+    </div>
+
+    <div class="nav-item">
+      <div class="nav-icon">
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+          <path d="M3 10C4 8 5 6 7 5C9 4 10 5 11 7" stroke="#f472b6" stroke-width="1.2" stroke-linecap="round"/>
+          <circle cx="7" cy="7" r="1.2" fill="#f472b6"/>
+        </svg>
+      </div>
+      Singing Voice
+      <span class="nav-badge">FR29-33</span>
+    </div>
+
+    <div class="sidebar-section">System</div>
+    <div class="nav-item">
+      <div class="nav-icon">
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+          <rect x="1" y="1" width="5" height="5" rx="1" stroke="#565e78" stroke-width="1.1"/>
+          <rect x="8" y="1" width="5" height="5" rx="1" stroke="#565e78" stroke-width="1.1"/>
+          <rect x="1" y="8" width="5" height="5" rx="1" stroke="#565e78" stroke-width="1.1"/>
+          <rect x="8" y="8" width="5" height="5" rx="1" stroke="#565e78" stroke-width="1.1"/>
+        </svg>
+      </div>
+      Evaluation
+    </div>
+    <div class="nav-item">
+      <div class="nav-icon">
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+          <path d="M7 1V4M7 10V13M1 7H4M10 7H13M3 3L5 5M9 9L11 11M3 11L5 9M9 5L11 3" stroke="#565e78" stroke-width="1.1" stroke-linecap="round"/>
+        </svg>
+      </div>
+      Settings
+    </div>
+
+    <!-- 3-step indicator -->
+    <div style="margin-top: auto; padding: 12px 8px 0; border-top: 1px solid var(--border);">
+      <div class="sidebar-section" style="padding-top:0">3-Step Flow</div>
+      <div class="step-row">
+        <div class="step-badge done">✓</div>
+        <span class="step-label">Load audio</span>
+      </div>
+      <div class="step-row">
+        <div class="step-badge active">2</div>
+        <span class="step-label active">Select module</span>
+      </div>
+      <div class="step-row">
+        <div class="step-badge idle">3</div>
+        <span class="step-label">Convert &amp; export</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- MAIN CONTENT -->
+  <div class="main">
+
+    <!-- DROP ZONE + FILE -->
+    <div class="card">
+      <div class="section-header">
+        <span class="section-title">// audio_input</span>
+        <div class="section-controls">
+          <button class="btn-xs active">FILE</button>
+          <button class="btn-xs">MIC</button>
+        </div>
+      </div>
+
+      <div class="drop-zone" id="dropzone" onclick="simulateLoad()">
+        <svg width="28" height="28" viewBox="0 0 28 28" fill="none" style="margin: 0 auto 8px; display:block">
+          <rect x="2" y="5" width="24" height="18" rx="3" stroke="#6c63ff" stroke-width="1.2" stroke-dasharray="3 2"/>
+          <path d="M14 11V19M10 15L14 11L18 15" stroke="#6c63ff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        <div class="drop-zone-title" id="dz-title">Drop audio file here</div>
+        <div class="drop-zone-sub" id="dz-sub">or click to browse</div>
+        <div class="fmt-tags">
+          <div class="fmt-tag">WAV</div>
+          <div class="fmt-tag">MP3</div>
+          <div class="fmt-tag">FLAC</div>
+          <div class="fmt-tag">16kHz/22kHz</div>
+        </div>
+      </div>
+
+      <!-- Waveforms (original + processed) -->
+      <div class="waveform-area">
+        <div class="waveform-label">original</div>
+        <div class="waveform-label right" id="dur-label">2.8s</div>
+        <canvas class="waveform" id="wave-orig" height="88"></canvas>
+      </div>
+      <div class="waveform-area" style="margin-top:6px; opacity:0.7">
+        <div class="waveform-label" style="color:var(--teal)">processed</div>
+        <canvas class="waveform" id="wave-proc" height="88"></canvas>
+      </div>
+
+      <div class="playback-bar">
+        <div class="play-btn" id="playBtn" onclick="togglePlay()">
+          <svg id="play-icon" width="10" height="12" viewBox="0 0 10 12"><path d="M1 1L9 6L1 11Z" fill="var(--text1)"/></svg>
+        </div>
+        <div class="progress-wrap">
+          <div class="progress-bg" id="prog-bg" onclick="seekTo(event)">
+            <div class="progress-fill" id="prog-fill"></div>
+            <div class="progress-thumb" id="prog-thumb"></div>
+          </div>
+        </div>
+        <span class="time-text" id="time-text">0:01 / 0:02</span>
+      </div>
+    </div>
+
+    <!-- PITCH GRAPH -->
+    <div class="card">
+      <div class="section-header">
+        <span class="section-title">// f0_pitch_contour</span>
+        <div class="section-controls">
+          <button class="btn-xs active">F0</button>
+          <button class="btn-xs">MFCC</button>
+          <button class="btn-xs">ENERGY</button>
+        </div>
+      </div>
+      <div class="pitch-area">
+        <canvas id="pitch-canvas" width="100%" height="70" style="width:100%;height:70px;display:block"></canvas>
+      </div>
+    </div>
+
+    <!-- METRICS -->
+    <div class="metric-grid">
+      <div class="metric-card ok">
+        <div class="metric-label">LATENCY</div>
+        <div class="metric-val">312 <span class="metric-unit">ms</span></div>
+      </div>
+      <div class="metric-card ok">
+        <div class="metric-label">PROC TIME</div>
+        <div class="metric-val">1.4 <span class="metric-unit">s</span></div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">FIDELITY</div>
+        <div class="metric-val">4.2 <span class="metric-unit">/5</span></div>
+      </div>
+      <div class="metric-card ok">
+        <div class="metric-label">INTELLIG.</div>
+        <div class="metric-val">3.8 <span class="metric-unit">/5</span></div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- RIGHT PANEL -->
+  <div class="panel">
+
+    <div>
+      <div class="panel-title">// MODULE_SELECT</div>
+      <div class="module-grid">
+        <div class="module-btn active-emotion" onclick="selectModule('emotion')">
+          <svg width="22" height="22" viewBox="0 0 22 22" fill="none">
+            <circle cx="11" cy="11" r="8" stroke="#a78bfa" stroke-width="1.3"/>
+            <path d="M8 10.5Q11 8.5 14 10.5" stroke="#a78bfa" stroke-width="1.3" stroke-linecap="round"/>
+            <circle cx="8.5" cy="8.5" r="1" fill="#a78bfa"/>
+            <circle cx="13.5" cy="8.5" r="1" fill="#a78bfa"/>
+          </svg>
+          <span class="module-btn-label">Emotion</span>
+        </div>
+        <div class="module-btn" onclick="selectModule('gender')">
+          <svg width="22" height="22" viewBox="0 0 22 22" fill="none">
+            <circle cx="9" cy="9" r="5.5" stroke="#22d3b0" stroke-width="1.3"/>
+            <path d="M13 5L18 2M18 2H15M18 2V5" stroke="#22d3b0" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M9 14.5V18M7 16H11" stroke="#22d3b0" stroke-width="1.3" stroke-linecap="round"/>
+          </svg>
+          <span class="module-btn-label">Gender/Age</span>
+        </div>
+        <div class="module-btn" onclick="selectModule('speaker')">
+          <svg width="22" height="22" viewBox="0 0 22 22" fill="none">
+            <circle cx="9" cy="8" r="3.5" stroke="#f59e0b" stroke-width="1.3"/>
+            <path d="M3 18C3 15 5.7 13 9 13" stroke="#f59e0b" stroke-width="1.3" stroke-linecap="round"/>
+            <circle cx="16" cy="10" r="2.5" stroke="#f59e0b" stroke-width="1.1"/>
+            <path d="M13.5 17C13.5 15 14.6 14 16 14C17.4 14 18.5 15 18.5 17" stroke="#f59e0b" stroke-width="1.1" stroke-linecap="round"/>
+          </svg>
+          <span class="module-btn-label">Speaker</span>
+        </div>
+        <div class="module-btn" onclick="selectModule('singing')">
+          <svg width="22" height="22" viewBox="0 0 22 22" fill="none">
+            <path d="M5 16C6 12 8 10 11 9C14 8 16 10 17 13" stroke="#f472b6" stroke-width="1.3" stroke-linecap="round"/>
+            <circle cx="11" cy="9" r="1.5" fill="#f472b6"/>
+            <path d="M7 19H15" stroke="#f472b6" stroke-width="1" stroke-linecap="round"/>
+            <path d="M17 4L18 2M19 6L21 6M18 8L19 10" stroke="#f472b6" stroke-width="1" stroke-linecap="round"/>
+          </svg>
+          <span class="module-btn-label">Singing</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- PARAMS SECTION (Emotion mode) -->
+    <div id="params-emotion">
+      <div class="panel-title">// PARAMETERS</div>
+
+      <div class="param-row">
+        <div class="param-header">
+          <span class="param-name">Pitch Ratio</span>
+          <span class="param-val" id="pitch-val">+1.5 st</span>
+        </div>
+        <input type="range" min="-6" max="6" value="1.5" step="0.1" oninput="document.getElementById('pitch-val').textContent=(this.value>0?'+':'')+parseFloat(this.value).toFixed(1)+' st'; updateWaves()">
+      </div>
+
+      <div class="param-row">
+        <div class="param-header">
+          <span class="param-name">Speech Rate</span>
+          <span class="param-val teal" id="rate-val">1.15×</span>
+        </div>
+        <input type="range" class="teal" min="0.6" max="1.5" value="1.15" step="0.01" oninput="document.getElementById('rate-val').textContent=parseFloat(this.value).toFixed(2)+'×'">
+      </div>
+
+      <div class="param-row">
+        <div class="param-header">
+          <span class="param-name">Energy Envelope</span>
+          <span class="param-val amber" id="energy-val">1.4×</span>
+        </div>
+        <input type="range" class="amber" min="0.2" max="2.0" value="1.4" step="0.05" oninput="document.getElementById('energy-val').textContent=parseFloat(this.value).toFixed(2)+'×'">
+      </div>
+
+      <div>
+        <div class="panel-title" style="margin-bottom:8px">// TARGET_EMOTION</div>
+        <div class="chip-row">
+          <div class="chip" onclick="selectEmotion(this,'sad')">sad</div>
+          <div class="chip sel-angry" onclick="selectEmotion(this,'angry')">angry</div>
+          <div class="chip" onclick="selectEmotion(this,'excited')">excited</div>
+          <div class="chip" onclick="selectEmotion(this,'whisper')">whisper</div>
+          <div class="chip" onclick="selectEmotion(this,'calm')">calm</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- CONVERT BUTTON -->
+    <button class="convert-btn" onclick="runConvert()">
+      ▶ Convert Audio
+    </button>
+
+    <!-- LOG -->
+    <div>
+      <div class="panel-title">// SESSION_LOG</div>
+      <div id="log-list">
+        <div class="log-entry">
+          <div class="log-dot"></div>
+          <span class="log-time">14:32</span>
+          <span class="log-text">sample_speech.wav loaded (2.8s)</span>
+        </div>
+        <div class="log-entry">
+          <div class="log-dot pending"></div>
+          <span class="log-time">14:33</span>
+          <span class="log-text">F0 tracking complete — 187Hz mean</span>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+const PI = Math.PI;
+
+// --- WAVEFORM DRAW ---
+function drawWave(canvasId, seed, color1, color2, amplitude) {
+  const c = document.getElementById(canvasId);
+  if (!c) return;
+  const rect = c.parentElement.getBoundingClientRect();
+  c.width = Math.max(rect.width, 400);
+  c.height = 88;
+  const ctx = c.getContext('2d');
+  ctx.clearRect(0,0,c.width,c.height);
+  const mid = c.height / 2;
+  const grad = ctx.createLinearGradient(0, 0, c.width, 0);
+  grad.addColorStop(0, color1);
+  grad.addColorStop(1, color2);
+  ctx.strokeStyle = grad;
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  for (let x = 0; x < c.width; x++) {
+    const t = x / c.width;
+    const y = mid + amplitude * (
+      Math.sin(t * 28 + seed) * 0.5 +
+      Math.sin(t * 71 + seed * 1.3) * 0.25 +
+      Math.sin(t * 130 + seed * 0.7) * 0.12 +
+      Math.sin(t * 9 + seed * 2) * 0.13
+    ) * Math.sin(t * PI);
+    x === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+
+  // filled area under/above
+  ctx.beginPath();
+  for (let x = 0; x < c.width; x++) {
+    const t = x / c.width;
+    const y = mid + amplitude * (
+      Math.sin(t * 28 + seed) * 0.5 +
+      Math.sin(t * 71 + seed * 1.3) * 0.25 +
+      Math.sin(t * 130 + seed * 0.7) * 0.12 +
+      Math.sin(t * 9 + seed * 2) * 0.13
+    ) * Math.sin(t * PI);
+    x === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  }
+  ctx.lineTo(c.width, mid); ctx.lineTo(0, mid); ctx.closePath();
+  const fillGrad = ctx.createLinearGradient(0, 0, c.width, 0);
+  fillGrad.addColorStop(0, color1 + '18');
+  fillGrad.addColorStop(1, color2 + '18');
+  ctx.fillStyle = fillGrad;
+  ctx.fill();
+}
+
+function updateWaves(seed2) {
+  drawWave('wave-orig', 1.0, '#6c63ff', '#22d3b0', 28);
+  drawWave('wave-proc', seed2 || 2.4, '#22d3b0', '#a78bfa', 22);
+}
+
+// --- PITCH CANVAS ---
+function drawPitch() {
+  const c = document.getElementById('pitch-canvas');
+  if (!c) return;
+  const rect = c.parentElement.getBoundingClientRect();
+  c.width = Math.max(rect.width, 400);
+  c.height = 70;
+  const ctx = c.getContext('2d');
+  ctx.clearRect(0,0,c.width,c.height);
+
+  // grid lines
+  ctx.strokeStyle = 'rgba(255,255,255,0.04)';
+  ctx.lineWidth = 0.5;
+  for (let i = 1; i < 4; i++) {
+    ctx.beginPath(); ctx.moveTo(0, (c.height/4)*i); ctx.lineTo(c.width, (c.height/4)*i); ctx.stroke();
+  }
+
+  // original F0
+  ctx.strokeStyle = 'rgba(108,99,255,0.5)';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  for (let x = 0; x < c.width; x++) {
+    const t = x / c.width;
+    const y = 55 - 38 * (Math.sin(t*9)*0.4 + Math.sin(t*3.5)*0.35 + Math.sin(t*17)*0.1) * Math.sin(t*PI);
+    x===0 ? ctx.moveTo(x,y) : ctx.lineTo(x,y);
+  }
+  ctx.stroke();
+
+  // processed F0
+  const grad = ctx.createLinearGradient(0,0,c.width,0);
+  grad.addColorStop(0,'#6c63ff'); grad.addColorStop(1,'#22d3b0');
+  ctx.strokeStyle = grad;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  for (let x = 0; x < c.width; x++) {
+    const t = x / c.width;
+    const y = 50 - 42 * (Math.sin(t*9+0.6)*0.4 + Math.sin(t*3.5+0.3)*0.35 + Math.sin(t*17+0.2)*0.1) * Math.sin(t*PI);
+    x===0 ? ctx.moveTo(x,y) : ctx.lineTo(x,y);
+  }
+  ctx.stroke();
+
+  // labels
+  ctx.fillStyle = 'rgba(139,146,168,0.7)';
+  ctx.font = '9px JetBrains Mono, monospace';
+  ctx.fillText('300 Hz', 4, 14);
+  ctx.fillText('100 Hz', 4, 64);
+}
+
+// --- PLAYBACK SIMULATION ---
+let playing = false; let pct = 0.34; let raf;
+function togglePlay() {
+  playing = !playing;
+  document.getElementById('play-icon').innerHTML = playing
+    ? '<rect x="2" y="1" width="3" height="10" rx="1" fill="var(--text1)"/><rect x="7" y="1" width="3" height="10" rx="1" fill="var(--text1)"/>'
+    : '<path d="M1 1L9 6L1 11Z" fill="var(--text1)"/>';
+  if (playing) animPlay();
+  else cancelAnimationFrame(raf);
+}
+function animPlay() {
+  pct += 0.001; if (pct > 1) pct = 0;
+  document.getElementById('prog-fill').style.width = (pct*100) + '%';
+  document.getElementById('prog-thumb').style.left = (pct*100) + '%';
+  const s = Math.floor(pct * 2.8);
+  const f = Math.floor((pct * 2.8 - s) * 10);
+  document.getElementById('time-text').textContent = '0:0'+s+'.'+f+' / 0:02';
+  raf = requestAnimationFrame(animPlay);
+}
+function seekTo(e) {
+  const r = e.currentTarget.getBoundingClientRect();
+  pct = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
+  document.getElementById('prog-fill').style.width = (pct*100)+'%';
+  document.getElementById('prog-thumb').style.left = (pct*100)+'%';
+}
+
+// --- DROP ZONE SIMULATE ---
+function simulateLoad() {
+  document.getElementById('dz-title').textContent = '✓ sample_speech.wav';
+  document.getElementById('dz-sub').textContent = '2.8s · 16kHz · mono · 480KB';
+  document.querySelector('.drop-zone').style.borderColor = 'rgba(34,211,176,0.4)';
+  document.querySelector('.drop-zone').style.background = 'rgba(34,211,176,0.04)';
+}
+
+// --- MODULE SELECT ---
+function selectModule(m) {
+  document.querySelectorAll('.module-btn').forEach(b => {
+    b.className = 'module-btn';
+  });
+  const btns = document.querySelectorAll('.module-btn');
+  const idx = ['emotion','gender','speaker','singing'].indexOf(m);
+  if (idx >= 0) btns[idx].className = 'module-btn active-'+m;
+}
+
+// --- EMOTION CHIP SELECT ---
+function selectEmotion(el, e) {
+  document.querySelectorAll('.chip').forEach(c => c.className = 'chip');
+  el.className = 'chip sel-' + e;
+}
+
+// --- CONVERT ---
+let logCount = 2;
+function runConvert() {
+  const times = ['14:34','14:35','14:36'];
+  const msgs = ['Emotion module initialized','F0 shifting +1.5st applied','✓ Output generated — duration 2.4s'];
+  const dots = ['pending','pending',''];
+  const btn = document.querySelector('.convert-btn');
+  btn.textContent = '⟳ Processing...';
+  btn.style.background = 'linear-gradient(135deg, #232840, #2a2f50)';
+  btn.style.boxShadow = 'none';
+  let i = 0;
+  const interval = setInterval(() => {
+    if (i >= msgs.length) {
+      clearInterval(interval);
+      btn.textContent = '▶ Convert Audio';
+      btn.style.background = 'linear-gradient(135deg, #6c63ff, #8b5cf6)';
+      btn.style.boxShadow = '0 4px 16px rgba(108,99,255,0.35)';
+      updateWaves(Math.random() * 10);
+      return;
+    }
+    const list = document.getElementById('log-list');
+    const entry = document.createElement('div');
+    entry.className = 'log-entry';
+    entry.innerHTML = `<div class="log-dot ${dots[i]}"></div><span class="log-time">${times[i]}</span><span class="log-text">${msgs[i]}</span>`;
+    list.appendChild(entry);
+    list.scrollTop = list.scrollHeight;
+    i++;
+  }, 500);
+}
+
+// --- INIT ---
+window.addEventListener('load', () => {
+  setTimeout(() => { updateWaves(); drawPitch(); }, 100);
+});
+window.addEventListener('resize', () => { updateWaves(); drawPitch(); });
+</script>
