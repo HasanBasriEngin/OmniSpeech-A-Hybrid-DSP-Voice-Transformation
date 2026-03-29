@@ -1,8 +1,0 @@
-<UserControl x:Class="OmniSpeech_WPF.Controls.PitchContourView"
-             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             Height="70">
-    <Border Background="{StaticResource Bg2Brush}" CornerRadius="8" BorderBrush="#2B3246" BorderThickness="1">
-        <Canvas x:Name="PitchCanvas"/>
-    </Border>
-</UserControl>

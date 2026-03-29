@@ -1,2 +1,0 @@
-"""OmniSpeech utility helpers."""
-

@@ -1,105 +1,186 @@
-# OmniSpeech - A Hybrid DSP Voice Transformation System
+﻿# OmniSpeech 2.0 (Tauri + React + Python)
 
-Ankara Bilim University - CENG 384 Project
+OmniSpeech, masaustu ses donusumu icin Tauri tabanli bir desktop shell, React tabanli bir arayuz ve Python/FastAPI tabanli bir ses isleme backend'i birlestirir.
 
-OmniSpeech, sesin dilsel içeriğini koruyarak duygu, cinsiyet/yaş, konuşmacı kimliği ve şarkı benzeri dönüşüm işlemleri yapan hibrit bir DSP + öğrenme tabanlı dönüşüm sistemidir.
+## Guncel Durum
 
-## Kullanılan Teknolojiler
+Bu repodaki guncel uygulama:
+- Tauri desktop uygulamasi olarak acilir (browser odakli localhost uygulamasi degildir).
+- `run_omnispeech.bat` ile tek komutta kurulum + calistirma akisini destekler.
+- UI'daki ana butonlar backend aksiyonlarina baglidir:
+  - Dosya secimi
+  - Referans dosya secimi
+  - MIDI secimi
+  - Conversion calistirma
+  - Live session baslat/durdur
+  - Virtual mic cihaz listesi yenileme
 
-| Kategori | Teknolojiler |
-|----------|-------------|
-| **Core / DSP** | ![Python](https://img.shields.io/badge/Python-3.10+-3776AB?style=for-the-badge&logo=python&logoColor=white) ![NumPy](https://img.shields.io/badge/NumPy-013243?style=for-the-badge&logo=numpy&logoColor=white) ![SciPy](https://img.shields.io/badge/SciPy-8CAAE6?style=for-the-badge&logo=scipy&logoColor=white) ![Librosa](https://img.shields.io/badge/Librosa-Audio-blue?style=for-the-badge) |
-| **Python Frontend** | ![PyQt6](https://img.shields.io/badge/PyQt6-41CD52?style=for-the-badge&logo=qt&logoColor=white) |
-| **WPF Frontend (Opsiyonel)** | ![.NET](https://img.shields.io/badge/.NET_10-512BD4?style=for-the-badge&logo=dotnet&logoColor=white) ![C#](https://img.shields.io/badge/C%23-WPF-239120?style=for-the-badge&logo=csharp&logoColor=white) |
-| **Audio I/O** | ![SoundFile](https://img.shields.io/badge/SoundFile-WAV%2FFLAC-4B5563?style=for-the-badge) ![PyDub](https://img.shields.io/badge/PyDub-MP3-4B5563?style=for-the-badge) ![PyAudio](https://img.shields.io/badge/PyAudio-Microphone-4B5563?style=for-the-badge) |
-| **Model / Runtime** | ![PyTorch](https://img.shields.io/badge/PyTorch-EE4C2C?style=for-the-badge&logo=pytorch&logoColor=white) ![ONNX Runtime](https://img.shields.io/badge/ONNX_Runtime-005CED?style=for-the-badge&logo=onnx&logoColor=white) |
+## Teknoloji Yigini
+
+- Desktop shell: `Tauri 2.x (Rust)`
+- Frontend: `React 18 + Vite`
+- UI stili: custom CSS (mockup tabanli koyu tema)
+- Backend: `FastAPI + PyTorch + Librosa`
+- Ses I/O: `soundfile`, `sounddevice`
 
 ## Gereksinimler
 
-| Araç | Versiyon |
-|------|----------|
-| Python | 3.10+ |
-| pip | güncel |
-| .NET SDK (WPF için) | 10.0+ |
-| Windows | 10/11 |
+### Tum platformlar
 
-## Kurulum
+- Python `3.10+`
+- Node.js `20+`
 
-### 1. Repo'yu klonla
+### Windows
 
-```bash
-git clone <repo-url>
-cd OmniSpeech-A-Hybrid-DSP-Voice-Transformation
+- Rust toolchain (`cargo`, `rustup`)
+- Visual Studio Build Tools (C++ workload)
+  - Desktop development with C++
+  - MSVC v143 x64/x86
+  - Windows 10/11 SDK
+
+### macOS
+
+- Rust toolchain (`cargo`, `rustup`)
+- Xcode Command Line Tools
+
+## Onerilen Baslatma (Windows)
+
+Repodaki otomasyon scripti:
+
+```bat
+run_omnispeech.bat
 ```
 
-### 2. Python sanal ortamını oluştur ve aktif et
+Script su islemleri yapar:
+- Python bulunmasi / `.venv` olusturma
+- `requirements.txt` kurulumu
+- `npm install` kontrolu
+- esbuild runtime onarimi (gerektiginde)
+- Rust/cargo kontrolu
+- MSVC linker (`link.exe`) kontrolu
+- `1420` portu doluysa stale process temizligi
+- `npm run tauri dev` baslatma
+
+### Script icin kullanisli ortam degiskenleri
+
+```bat
+set OMNISPEECH_FORCE_INSTALL=1
+set OMNISPEECH_SETUP_ONLY=1
+set OMNISPEECH_INSTALL_RUST=1
+```
+
+- `OMNISPEECH_FORCE_INSTALL=1`: Python/npm bagimliliklarini yeniden kurar
+- `OMNISPEECH_SETUP_ONLY=1`: sadece kurulum yapar, uygulamayi acmaz
+- `OMNISPEECH_INSTALL_RUST=1`: Rust otomatik kurulumunu dener
+
+## Manuel Calistirma
 
 ```bash
 python -m venv .venv
 .venv\Scripts\activate
-```
-
-### 3. Bağımlılıkları yükle
-
-```bash
 pip install -r requirements.txt
+npm install
+npm run tauri dev
 ```
 
-### 4. Uygulamayı başlat (Python / PyQt frontend)
+## UI Butonlari ve Islevleri
 
-```bash
-python main.py
-```
+### Sol / Ust alan
 
-Alternatif tek komut (Windows):
+- `Workspace / Evaluation / Settings`: sayfa gorunumu degistirir
+- Modul secimi (`Emotion`, `Gender/Age`, `Speaker/Clone`, `Singing`): aktif conversion tipini degistirir
 
-```bash
-run_omnispeech.bat
-```
+### Audio input karti
 
-### 5. WPF frontend'i çalıştır (opsiyonel)
+- `FILE`: dosya odakli akis
+- `MIC`: live session baslat/durdur denemesi
+- Drop area: dosya seciciyi tetikler
+- `Select Source`: ana ses dosyasi secer
+- `References`: speaker clone referans dosyalari secer
+- `MIDI`: singing modu icin MIDI dosyasi secer
+- `Refresh VMic`: virtual mic cihazlarini backend'den tekrar ceker
+- Play/progress: UI preview oynatma simulasyonu
 
-```bash
-cd OmniSpeech_WPF
-run_wpf_frontend.bat
-```
+### Sag panel
 
-## Temel Akış
+- Parametre sliderlari (`Pitch`, `Speech Rate`, `Energy`): conversion payload parametrelerini gunceller
+- Emotion chip'leri: emotion->mode eslemesini degistirir
+- `Route to virtual mic`: live session payload'ina route flag ekler
+- Virtual mic secimi: live session payload'ina cihaz adi ekler
+- `Start/Stop Live Session`: backend live session endpoint'lerini cagirir
+- `Convert Audio`: secili module gore conversion endpoint'ini cagirir
+- Session log: tum aksiyonlari zaman damgali listeler
 
-1. Ses yükle (`WAV`, `MP3`, `FLAC`) veya MIC simülasyonu seç  
-2. Modül seç (`Emotion`, `Gender/Age`, `Speaker`, `Singing`)  
-3. Parametreleri ayarla (`Pitch`, `Speech Rate`, `Energy`)  
-4. `Convert Audio` ile dönüşümü çalıştır  
-5. Sonucu export et (`Audio`, `Embedding`, `Session Log`)
+## Backend Endpointleri
 
-## Proje Yapısı
+- `GET /health`
+- `POST /api/convert/gender-age`
+- `POST /api/convert/speaker-clone`
+- `POST /api/convert/singing`
+- `GET /api/live/virtual-mics`
+- `POST /api/live/start`
+- `POST /api/live/chunk`
+- `POST /api/live/stop`
+
+## Proje Dizini (Kisa)
 
 ```text
-main.py                         -> Python uygulama giriş noktası
-requirements.txt                -> Python bağımlılıkları
-run_omnispeech.bat              -> Python app launcher
-CLAUDE.md                       -> Proje gereksinim ve mimari referansı
+backend/
+  api/
+  audio/
+  modules/
+  pipeline/
+  services/
+  server.py
 
-core/                           -> Input, preprocessing, output, evaluation
-modules/                        -> Emotion, gender/age, speaker, singing dönüşüm modülleri
-ui/                             -> PyQt frontend (views, controls, services, models, converters)
-utils/                          -> Ortak yardımcı fonksiyonlar
-tests/                          -> Temel test dosyaları
+src/
+  App.tsx
+  index.css
+  lib/tauri.ts
 
-OmniSpeech_WPF/                 -> Opsiyonel WPF frontend
+src-tauri/
+  src/
+    main.rs
+    commands.rs
+    backend.rs
+    types.rs
+  tauri.conf.json
+
+run_omnispeech.bat
+requirements.txt
+package.json
 ```
 
-## Komutlar
+## Bilinen Sinirlar
 
-```bash
-python -m pytest -v                            # Testleri çalıştır
-python main.py                                 # PyQt frontend başlat
-run_omnispeech.bat                             # Otomatik venv + install + run
-dotnet build OmniSpeech_WPF/OmniSpeech_WPF.csproj   # WPF derle
+- Live session UI tarafinda backend'de session acma/kapama aktif; surekli mikrofon chunk push akisi su an sinirli/gelistirme asamasindadir.
+- Waveform ve bazi playback davranislari UI simulasyonu ile desteklenir.
+
+## Sorun Giderme
+
+### Port 1420 in use
+
+Script otomatik temizlemeyi dener. Yetmezse:
+
+```powershell
+netstat -ano | findstr :1420
+taskkill /PID <PID> /F
 ```
 
-## Notlar
+### `cargo not found`
 
-- MP3 export için sistemde uygun `ffmpeg` kurulumu gerekebilir (`pydub` için).
-- Python Store alias sorunlarında, python.org üzerinden kurulum ve PATH ayarı önerilir.
-- WPF frontend görsel prototip/arayüz amaçlıdır; ana DSP pipeline Python tarafındadır.
+```powershell
+winget install -e --id Rustlang.Rustup
+```
+
+Ardindan yeni terminal acip tekrar deneyin.
+
+### `MSVC linker link.exe not found`
+
+Visual Studio Build Tools + C++ workload kurulmalidir.
+
+### Uygulama acilmiyor / gorunmuyor
+
+- Tum `omnispeech_desktop` process'lerini kapatin
+- `run_omnispeech.bat` ile temiz baslatin
+
