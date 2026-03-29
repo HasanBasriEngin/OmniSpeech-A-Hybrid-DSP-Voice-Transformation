@@ -18,3 +18,14 @@ Thumbs.db
 # .NET build artifacts (WPF frontend)
 OmniSpeech_WPF/bin/
 OmniSpeech_WPF/obj/
+
+# Tauri + React artifacts
+node_modules/
+dist/
+src-tauri/target/
+src-tauri/gen/
+.tmp/
+pytest-cache-files-*/
+.tmp/.pytest-tmp/
+.tmp/pytest-base/
+*.tsbuildinfo
