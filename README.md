@@ -1,186 +1,117 @@
-﻿# OmniSpeech 2.0 (Tauri + React + Python)
+# OmniSpeech Desktop (Tauri + React + Python)
 
-OmniSpeech, masaustu ses donusumu icin Tauri tabanli bir desktop shell, React tabanli bir arayuz ve Python/FastAPI tabanli bir ses isleme backend'i birlestirir.
+OmniSpeech, Tauri masaustu kabugu uzerinde calisan; React tabanli arayuz ve Python/FastAPI ses donusum backend'ini birlestiren hibrit bir ses donusum uygulamasidir.
 
-## Guncel Durum
+## Kullanilan Teknolojiler
 
-Bu repodaki guncel uygulama:
-- Tauri desktop uygulamasi olarak acilir (browser odakli localhost uygulamasi degildir).
-- `run_omnispeech.bat` ile tek komutta kurulum + calistirma akisini destekler.
-- UI'daki ana butonlar backend aksiyonlarina baglidir:
-  - Dosya secimi
-  - Referans dosya secimi
-  - MIDI secimi
-  - Conversion calistirma
-  - Live session baslat/durdur
-  - Virtual mic cihaz listesi yenileme
-
-## Teknoloji Yigini
-
-- Desktop shell: `Tauri 2.x (Rust)`
-- Frontend: `React 18 + Vite`
-- UI stili: custom CSS (mockup tabanli koyu tema)
-- Backend: `FastAPI + PyTorch + Librosa`
-- Ses I/O: `soundfile`, `sounddevice`
+| Kategori | Teknolojiler |
+|----------|-------------|
+| **Desktop** | ![Tauri](https://img.shields.io/badge/Tauri-FFC131?style=for-the-badge&logo=tauri&logoColor=black) ![Rust](https://img.shields.io/badge/Rust-000000?style=for-the-badge&logo=rust&logoColor=white) |
+| **Frontend** | ![React](https://img.shields.io/badge/React-20232A?style=for-the-badge&logo=react&logoColor=61DAFB) ![TypeScript](https://img.shields.io/badge/TypeScript-007ACC?style=for-the-badge&logo=typescript&logoColor=white) ![Vite](https://img.shields.io/badge/Vite-646CFF?style=for-the-badge&logo=vite&logoColor=white) ![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS-38B2AC?style=for-the-badge&logo=tailwind-css&logoColor=white) |
+| **Backend** | ![Python](https://img.shields.io/badge/Python-3776AB?style=for-the-badge&logo=python&logoColor=white) ![FastAPI](https://img.shields.io/badge/FastAPI-009688?style=for-the-badge&logo=fastapi&logoColor=white) ![PyTorch](https://img.shields.io/badge/PyTorch-EE4C2C?style=for-the-badge&logo=pytorch&logoColor=white) ![Librosa](https://img.shields.io/badge/Librosa-Audio-blue?style=for-the-badge) |
+| **Ses I/O** | ![SoundDevice](https://img.shields.io/badge/SoundDevice-RealTime-1F6FEB?style=for-the-badge) ![SoundFile](https://img.shields.io/badge/SoundFile-WAV%2FFLAC-1F6FEB?style=for-the-badge) |
 
 ## Gereksinimler
 
-### Tum platformlar
+| Arac | Versiyon |
+|------|----------|
+| Python | 3.10+ |
+| Node.js | 20+ |
+| Rust (cargo/rustup) | stable |
+| Tauri CLI | 2.x (npm dependency ile gelir) |
 
-- Python `3.10+`
-- Node.js `20+`
+Platform notlari:
+- Windows: Visual Studio Build Tools (Desktop development with C++, MSVC v143, Windows 10/11 SDK)
+- macOS: Xcode Command Line Tools
 
-### Windows
+## Kurulum
 
-- Rust toolchain (`cargo`, `rustup`)
-- Visual Studio Build Tools (C++ workload)
-  - Desktop development with C++
-  - MSVC v143 x64/x86
-  - Windows 10/11 SDK
+### 1. Repo'yu klonla
 
-### macOS
+```bash
+git clone <repo-url>
+cd OmniSpeech-A-Hybrid-DSP-Voice-Transformation
+```
 
-- Rust toolchain (`cargo`, `rustup`)
-- Xcode Command Line Tools
-
-## Onerilen Baslatma (Windows)
-
-Repodaki otomasyon scripti:
+### 2. Windows tek komut kurulum ve calistirma
 
 ```bat
 run_omnispeech.bat
 ```
 
-Script su islemleri yapar:
-- Python bulunmasi / `.venv` olusturma
-- `requirements.txt` kurulumu
-- `npm install` kontrolu
-- esbuild runtime onarimi (gerektiginde)
-- Rust/cargo kontrolu
-- MSVC linker (`link.exe`) kontrolu
-- `1420` portu doluysa stale process temizligi
-- `npm run tauri dev` baslatma
+Bu script su islemleri yapar:
+- Python/Node/Rust kontrolu ve otomatik kurulum denemesi
+- `.venv` olusturma ve `requirements.txt` kurulumu
+- `npm install`
+- MSVC linker kontrolu
+- `npm run tauri dev` ile desktop baslatma
 
-### Script icin kullanisli ortam degiskenleri
-
-```bat
-set OMNISPEECH_FORCE_INSTALL=1
-set OMNISPEECH_SETUP_ONLY=1
-set OMNISPEECH_INSTALL_RUST=1
-```
-
-- `OMNISPEECH_FORCE_INSTALL=1`: Python/npm bagimliliklarini yeniden kurar
-- `OMNISPEECH_SETUP_ONLY=1`: sadece kurulum yapar, uygulamayi acmaz
-- `OMNISPEECH_INSTALL_RUST=1`: Rust otomatik kurulumunu dener
-
-## Manuel Calistirma
+### 3. Manuel kurulum (Windows/macOS)
 
 ```bash
 python -m venv .venv
+# Windows:
 .venv\Scripts\activate
+# macOS:
+source .venv/bin/activate
+
 pip install -r requirements.txt
 npm install
 npm run tauri dev
 ```
 
-## UI Butonlari ve Islevleri
+## Gelistirme Ortam Degiskenleri
 
-### Sol / Ust alan
+| Degisken | Aciklama |
+|----------|----------|
+| `OMNISPEECH_FORCE_INSTALL=1` | Python ve npm bagimliliklarini zorla tekrar kurar |
+| `OMNISPEECH_SETUP_ONLY=1` | Sadece kurulum yapar, uygulamayi acmaz |
+| `OMNISPEECH_AUTO_INSTALL=1` | Python/Node/Rust otomatik kurulum denemelerini acik tutar |
+| `OMNISPEECH_AUTO_INSTALL_MSVC=1` | Windows'ta MSVC Build Tools otomatik kurulum denemesini acik tutar |
 
-- `Workspace / Evaluation / Settings`: sayfa gorunumu degistirir
-- Modul secimi (`Emotion`, `Gender/Age`, `Speaker/Clone`, `Singing`): aktif conversion tipini degistirir
+## Ozellikler
 
-### Audio input karti
+- Canli mikrofon veya dosya tabanli ses donusumu
+- Cinsiyet/Yas donusumu
+- Konusmaci klonlama
+- Sarkiya donusturme (MIDI destekli akis)
+- Sanal mikrofon cihaz listesi ve route islemleri
+- Session log ve canli islem durumu
 
-- `FILE`: dosya odakli akis
-- `MIC`: live session baslat/durdur denemesi
-- Drop area: dosya seciciyi tetikler
-- `Select Source`: ana ses dosyasi secer
-- `References`: speaker clone referans dosyalari secer
-- `MIDI`: singing modu icin MIDI dosyasi secer
-- `Refresh VMic`: virtual mic cihazlarini backend'den tekrar ceker
-- Play/progress: UI preview oynatma simulasyonu
-
-### Sag panel
-
-- Parametre sliderlari (`Pitch`, `Speech Rate`, `Energy`): conversion payload parametrelerini gunceller
-- Emotion chip'leri: emotion->mode eslemesini degistirir
-- `Route to virtual mic`: live session payload'ina route flag ekler
-- Virtual mic secimi: live session payload'ina cihaz adi ekler
-- `Start/Stop Live Session`: backend live session endpoint'lerini cagirir
-- `Convert Audio`: secili module gore conversion endpoint'ini cagirir
-- Session log: tum aksiyonlari zaman damgali listeler
-
-## Backend Endpointleri
-
-- `GET /health`
-- `POST /api/convert/gender-age`
-- `POST /api/convert/speaker-clone`
-- `POST /api/convert/singing`
-- `GET /api/live/virtual-mics`
-- `POST /api/live/start`
-- `POST /api/live/chunk`
-- `POST /api/live/stop`
-
-## Proje Dizini (Kisa)
+## Proje Yapisi
 
 ```text
-backend/
-  api/
-  audio/
-  modules/
-  pipeline/
-  services/
-  server.py
-
-src/
-  App.tsx
-  index.css
-  lib/tauri.ts
-
-src-tauri/
-  src/
-    main.rs
-    commands.rs
-    backend.rs
-    types.rs
-  tauri.conf.json
-
-run_omnispeech.bat
-requirements.txt
-package.json
+backend/                  -> FastAPI tabanli ses donusum backend'i
+backend/api/              -> Route ve schema tanimlari
+backend/audio/            -> Ses okuma/yazma ve ozellik cikarimi
+backend/modules/          -> Donusum modulleri (gender-age, clone, singing)
+backend/pipeline/         -> Islem orkestrasyonu
+backend/services/         -> Live session ve virtual mic servisleri
+src/                      -> React uygulamasi (UI + state + Tauri bridge)
+src-tauri/                -> Rust/Tauri desktop katmani
+tests/                    -> Backend pipeline testleri
+run_omnispeech.bat        -> Windows otomatik kurulum + calistirma scripti
+requirements.txt          -> Python bagimliliklari
+package.json              -> Node/Tauri bagimliliklari
 ```
 
-## Bilinen Sinirlar
+## Komutlar
 
-- Live session UI tarafinda backend'de session acma/kapama aktif; surekli mikrofon chunk push akisi su an sinirli/gelistirme asamasindadir.
-- Waveform ve bazi playback davranislari UI simulasyonu ile desteklenir.
+```bash
+# Frontend gelistirme
+npm run dev
 
-## Sorun Giderme
+# Desktop (Tauri) gelistirme
+npm run tauri dev
 
-### Port 1420 in use
+# Frontend production build
+npm run build
 
-Script otomatik temizlemeyi dener. Yetmezse:
-
-```powershell
-netstat -ano | findstr :1420
-taskkill /PID <PID> /F
+# Backend test
+python -m pytest tests/test_backend_pipeline.py
 ```
 
-### `cargo not found`
+## Notlar
 
-```powershell
-winget install -e --id Rustlang.Rustup
-```
-
-Ardindan yeni terminal acip tekrar deneyin.
-
-### `MSVC linker link.exe not found`
-
-Visual Studio Build Tools + C++ workload kurulmalidir.
-
-### Uygulama acilmiyor / gorunmuyor
-
-- Tum `omnispeech_desktop` process'lerini kapatin
-- `run_omnispeech.bat` ile temiz baslatin
-
+- Uygulama masaustu (Tauri) olarak calisir. Gelistirme modunda Vite dev server arka planda `127.0.0.1:1420` kullanir; paketli surumde tarayici uygulamasi gibi davranmaz.
+- `pytest-cache-files-*`, `.tmp/`, `__pycache__/`, `*.tsbuildinfo` gibi yerel cache dosyalari `.gitignore` ile dislanmistir.
