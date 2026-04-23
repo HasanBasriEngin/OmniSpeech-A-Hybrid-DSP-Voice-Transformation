@@ -23,12 +23,12 @@ const moduleMeta: Record<ModuleKey, { label: string; badge: string }> = {
   singing: { label: "Singing Voice", badge: "FR29-33" },
 };
 
-const emotionToMode: Record<EmotionKey, string> = {
-  sad: "adult_to_elderly",
-  angry: "female_to_male",
-  excited: "adult_to_child",
-  whisper: "male_to_female",
-  calm: "child_to_adult",
+const emotionDescriptions: Record<EmotionKey, string> = {
+  sad: "Lower pitch and softer phrasing",
+  angry: "Sharper attack and stronger energy",
+  excited: "Higher pitch and faster delivery",
+  whisper: "Breathier tone with reduced energy",
+  calm: "Balanced tone with smoother pacing",
 };
 
 function nowClock() {
@@ -296,13 +296,20 @@ export default function App() {
     }
 
     try {
-      const task = activeModule === "speaker" ? "speaker_clone" : activeModule === "singing" ? "singing" : "gender_age";
-      const mode = activeModule === "emotion" ? emotionToMode[selectedEmotion] : "male_to_female";
+      const task =
+        activeModule === "emotion"
+          ? "emotion"
+          : activeModule === "speaker"
+            ? "speaker_clone"
+            : activeModule === "singing"
+              ? "singing"
+              : "gender_age";
 
       const sessionId = await api.startLiveSession(
         task,
         {
-          mode,
+          emotion: selectedEmotion,
+          mode: "male_to_female",
           midi_path: midiFile,
           reference_paths: referenceFiles,
           pitch_ratio: pitchValue,
@@ -345,12 +352,20 @@ export default function App() {
     addLog(`Conversion started for ${activeModule}`, true);
 
     try {
-      const task = activeModule === "speaker" ? "speaker_clone" : activeModule === "singing" ? "singing" : "gender_age";
+      const task =
+        activeModule === "emotion"
+          ? "emotion"
+          : activeModule === "speaker"
+            ? "speaker_clone"
+            : activeModule === "singing"
+              ? "singing"
+              : "gender_age";
       let result: { outputPath: string; metrics: Record<string, number> };
 
-      if (task === "gender_age") {
-        const mode = activeModule === "emotion" ? emotionToMode[selectedEmotion] : "male_to_female";
-        result = await api.convertGenderAge(inputPath, mode, null);
+      if (task === "emotion") {
+        result = await api.convertEmotion(inputPath, selectedEmotion, null);
+      } else if (task === "gender_age") {
+        result = await api.convertGenderAge(inputPath, "male_to_female", null);
       } else if (task === "speaker_clone") {
         let refs = referenceFiles;
         if (refs.length === 0) {
@@ -436,7 +451,11 @@ export default function App() {
 
   const statusText = isLive ? "live" : backendReady ? "ready" : "offline";
   const statusColor = isLive || backendReady ? "#22d3b0" : "#f87171";
-  const modeInfo = activeModule === "emotion" ? emotionToMode[selectedEmotion] : "male_to_female";
+  const modeInfo = activeModule === "emotion" ? emotionDescriptions[selectedEmotion] : "male_to_female";
+  const speakerReferencesRequired = activeModule === "speaker";
+  const singingMidiSuggested = activeModule === "singing";
+  const convertBlockedReason = speakerReferencesRequired && referenceFiles.length === 0 ? "Speaker / Clone icin en az bir referans dosyasi sec." : null;
+  const convertButtonLabel = isConverting ? "Processing..." : convertBlockedReason ? "References Required" : "Convert Audio";
 
   return (
     <div className="app">
@@ -530,9 +549,46 @@ export default function App() {
 
               <div className="action-row">
                 <button className="btn-xs" onClick={() => void pickSource()} type="button">Select Source</button>
-                <button className="btn-xs" onClick={() => void pickReferences()} type="button">References</button>
-                <button className="btn-xs" onClick={() => void pickMidi()} type="button">MIDI</button>
+                <button className={`btn-xs ${speakerReferencesRequired ? "active" : ""}`} onClick={() => void pickReferences()} type="button">
+                  {speakerReferencesRequired ? "References Required" : "References"}
+                </button>
+                <button className={`btn-xs ${singingMidiSuggested ? "active" : ""}`} onClick={() => void pickMidi()} type="button">
+                  {singingMidiSuggested ? "MIDI Suggested" : "MIDI"}
+                </button>
                 <button className="btn-xs" onClick={() => void refreshVirtualMics()} type="button">Refresh VMic</button>
+              </div>
+
+              <div className={`mini-note ${convertBlockedReason ? "warn" : ""}`}>
+                {convertBlockedReason
+                  ? convertBlockedReason
+                  : activeModule === "emotion"
+                    ? `${selectedEmotion} emotion profili secili ve donusume hazir.`
+                  : singingMidiSuggested
+                    ? "Singing modu icin MIDI secerek melodiyi yonlendirebilirsin."
+                    : speakerReferencesRequired
+                      ? `${referenceFiles.length} referans dosyasi hazir.`
+                      : "Mevcut modul icin ek giris secimi opsiyonel."}
+              </div>
+
+              <div className="selection-strip">
+                <div className="selection-chip active">
+                  <span className="selection-label">Module</span>
+                  <span className="selection-value">{moduleMeta[activeModule].label}</span>
+                </div>
+                <div className={`selection-chip ${sourceFile ? "ok" : ""}`}>
+                  <span className="selection-label">Source</span>
+                  <span className="selection-value">{sourceFile ? basename(sourceFile) : "Not selected"}</span>
+                </div>
+                <div className={`selection-chip ${referenceFiles.length > 0 ? "ok" : speakerReferencesRequired ? "warn" : ""}`}>
+                  <span className="selection-label">References</span>
+                  <span className="selection-value">
+                    {referenceFiles.length > 0 ? `${referenceFiles.length} file${referenceFiles.length > 1 ? "s" : ""}` : "None"}
+                  </span>
+                </div>
+                <div className={`selection-chip ${midiFile ? "ok" : singingMidiSuggested ? "active" : ""}`}>
+                  <span className="selection-label">MIDI</span>
+                  <span className="selection-value">{midiFile ? basename(midiFile) : singingMidiSuggested ? "Suggested" : "Optional"}</span>
+                </div>
               </div>
 
               <div className="waveform-area">
@@ -675,8 +731,8 @@ export default function App() {
           <button className="btn-xs" onClick={() => void startLive()} type="button">{isLive ? "Stop Live Session" : "Start Live Session"}</button>
         </div>
 
-        <button className="convert-btn" onClick={() => void runConvert()} type="button">
-          {isConverting ? "Processing..." : "Convert Audio"}
+        <button className="convert-btn" disabled={Boolean(convertBlockedReason) || isConverting} onClick={() => void runConvert()} type="button">
+          {convertButtonLabel}
         </button>
 
         <div>

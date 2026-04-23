@@ -5,6 +5,7 @@ import numpy as np
 
 from backend.api.schemas import (
     ConversionResponse,
+    EmotionRequest,
     GenderAgeRequest,
     HealthResponse,
     LiveChunkRequest,
@@ -26,6 +27,18 @@ def build_router(pipeline: VoiceConversionPipeline, live_manager: LiveSessionMan
     @router.get("/health", response_model=HealthResponse)
     async def health() -> HealthResponse:
         return HealthResponse(status="ok", backend="omnispeech-python")
+
+    @router.post("/api/convert/emotion", response_model=ConversionResponse)
+    async def convert_emotion(payload: EmotionRequest) -> ConversionResponse:
+        try:
+            result = pipeline.convert_emotion_file(
+                input_path=payload.input_path,
+                emotion=payload.emotion,
+                output_path=payload.output_path,
+            )
+            return ConversionResponse(output_path=result.output_path, metrics=result.metrics)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @router.post("/api/convert/gender-age", response_model=ConversionResponse)
     async def convert_gender_age(payload: GenderAgeRequest) -> ConversionResponse:

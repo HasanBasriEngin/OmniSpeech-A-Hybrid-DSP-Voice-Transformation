@@ -13,6 +13,8 @@ export const api = {
   pickAudioFile: () => tauriOnly<string | null>("pick_audio_file"),
   pickReferenceFiles: () => tauriOnly<string[]>("pick_reference_files"),
   pickMidiFile: () => tauriOnly<string | null>("pick_midi_file"),
+  convertEmotion: (inputPath: string, emotion: string, outputPath: string | null = null) =>
+    tauriOnly<ConversionResult>("convert_emotion", { inputPath, emotion, outputPath }),
   convertGenderAge: (inputPath: string, mode: string, outputPath: string | null = null) =>
     tauriOnly<ConversionResult>("convert_gender_age", { inputPath, mode, outputPath }),
   convertSpeakerClone: (inputPath: string, referencePaths: string[], outputPath: string | null = null) =>

@@ -1,6 +1,6 @@
 use once_cell::sync::Lazy;
 use serde_json::Value;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 use tokio::time::{sleep, Duration};
@@ -14,42 +14,61 @@ struct BackendProcessState {
 
 static BACKEND_STATE: Lazy<Mutex<BackendProcessState>> = Lazy::new(|| Mutex::new(BackendProcessState::default()));
 
-fn find_backend_script() -> Option<PathBuf> {
+fn find_backend_root() -> Option<PathBuf> {
     let mut candidates: Vec<PathBuf> = Vec::new();
 
     if let Ok(cwd) = std::env::current_dir() {
-        candidates.push(cwd.join("backend").join("server.py"));
-        candidates.push(cwd.join("../backend/server.py"));
+        candidates.push(cwd.clone());
+        if let Some(parent) = cwd.parent() {
+            candidates.push(parent.to_path_buf());
+        }
     }
 
     if let Ok(exe_path) = std::env::current_exe() {
         if let Some(parent) = exe_path.parent() {
-            candidates.push(parent.join("backend").join("server.py"));
-            candidates.push(parent.join("../../backend/server.py"));
-            candidates.push(parent.join("../../../backend/server.py"));
+            candidates.push(parent.to_path_buf());
+            candidates.push(parent.join(".."));
+            candidates.push(parent.join("../.."));
+            candidates.push(parent.join("../../.."));
         }
     }
 
     candidates
         .into_iter()
         .map(|path| path.canonicalize().unwrap_or(path))
-        .find(|path| path.exists())
+        .find(|root| root.join("backend").join("server.py").exists())
 }
 
-fn python_candidates() -> Vec<String> {
+fn python_candidates(backend_root: &Path) -> Vec<String> {
     let mut candidates = Vec::new();
     if let Ok(custom) = std::env::var("OMNISPEECH_PYTHON") {
         if !custom.trim().is_empty() {
             candidates.push(custom);
         }
     }
+    candidates.push(
+        backend_root
+            .join(".venv")
+            .join("Scripts")
+            .join("python.exe")
+            .to_string_lossy()
+            .to_string(),
+    );
+    candidates.push(
+        backend_root
+            .join(".venv")
+            .join("bin")
+            .join("python")
+            .to_string_lossy()
+            .to_string(),
+    );
     candidates.push("python".to_string());
     candidates.push("python3".to_string());
     candidates
 }
 
-fn pick_python() -> Option<String> {
-    python_candidates().into_iter().find(|candidate| {
+fn pick_python(backend_root: &Path) -> Option<String> {
+    python_candidates(backend_root).into_iter().find(|candidate| {
         Command::new(candidate)
             .arg("--version")
             .stdout(Stdio::null())
@@ -60,10 +79,10 @@ fn pick_python() -> Option<String> {
 }
 
 pub async fn start_backend() -> Result<String, String> {
-    let script = find_backend_script()
-        .ok_or_else(|| "Python backend script not found at backend/server.py".to_string())?;
+    let backend_root =
+        find_backend_root().ok_or_else(|| "Python backend root not found alongside backend/server.py".to_string())?;
 
-    let python = pick_python().ok_or_else(|| {
+    let python = pick_python(&backend_root).ok_or_else(|| {
         "Python runtime not found. Set OMNISPEECH_PYTHON or install python/python3".to_string()
     })?;
 
@@ -82,7 +101,9 @@ pub async fn start_backend() -> Result<String, String> {
         }
 
         let mut cmd = Command::new(&python);
-        cmd.arg(script)
+        cmd.current_dir(&backend_root)
+            .arg("-m")
+            .arg("backend.server")
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .stdin(Stdio::null());

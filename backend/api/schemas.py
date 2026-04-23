@@ -15,6 +15,12 @@ class ConversionResponse(BaseModel):
     metrics: dict[str, float] = Field(default_factory=dict)
 
 
+class EmotionRequest(BaseModel):
+    input_path: str
+    emotion: Literal["sad", "angry", "excited", "whisper", "calm"]
+    output_path: str | None = None
+
+
 class GenderAgeRequest(BaseModel):
     input_path: str
     mode: str
@@ -35,7 +41,7 @@ class SingingRequest(BaseModel):
 
 
 class LiveSessionStartRequest(BaseModel):
-    task: Literal["gender_age", "speaker_clone", "singing"]
+    task: Literal["emotion", "gender_age", "speaker_clone", "singing"]
     options: dict[str, object] = Field(default_factory=dict)
     route_to_virtual_mic: bool = False
     virtual_mic_device: str | None = None

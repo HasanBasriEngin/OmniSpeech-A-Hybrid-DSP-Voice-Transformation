@@ -80,6 +80,21 @@ pub async fn pick_midi_file(app: AppHandle) -> Result<Option<String>, String> {
 }
 
 #[tauri::command]
+pub async fn convert_emotion(
+    input_path: String,
+    emotion: String,
+    output_path: Option<String>,
+) -> Result<ConversionResponse, String> {
+    let payload = json!({
+        "input_path": input_path,
+        "emotion": emotion,
+        "output_path": output_path,
+    });
+    let response = backend::post("/api/convert/emotion", payload).await?;
+    serde_json::from_value(response).map_err(|err| format!("Invalid conversion response: {err}"))
+}
+
+#[tauri::command]
 pub async fn convert_gender_age(
     input_path: String,
     mode: String,

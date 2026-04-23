@@ -7,6 +7,7 @@ import numpy as np
 
 from backend.audio.features import extract_pitch_contour
 from backend.audio.io import default_output_path, load_audio_mono, save_audio
+from backend.modules.emotion import convert_emotion
 from backend.modules.gender_age import convert_gender_age
 from backend.modules.singing import convert_to_singing
 from backend.modules.speaker_clone import clone_speaker
@@ -23,6 +24,16 @@ class VoiceConversionPipeline:
 
     def __init__(self, sample_rate: int) -> None:
         self.sample_rate = sample_rate
+
+    def convert_emotion_file(self, input_path: str, emotion: str, output_path: str | None = None) -> PipelineResult:
+        source = load_audio_mono(input_path, self.sample_rate)
+        start = perf_counter()
+        converted = convert_emotion(source, self.sample_rate, emotion)
+        elapsed = perf_counter() - start
+        path = save_audio(output_path or default_output_path(input_path, f"emotion_{emotion}"), converted, self.sample_rate)
+        metrics = self._build_metrics(source, converted, elapsed)
+        metrics["emotion_profile"] = float(sorted(["angry", "calm", "excited", "sad", "whisper"]).index(emotion))
+        return PipelineResult(output_path=path, metrics=metrics)
 
     def convert_gender_age_file(self, input_path: str, mode: str, output_path: str | None = None) -> PipelineResult:
         source = load_audio_mono(input_path, self.sample_rate)
@@ -74,6 +85,10 @@ class VoiceConversionPipeline:
         return PipelineResult(output_path=path, metrics=metrics)
 
     def process_live_chunk(self, chunk: np.ndarray, task: str, options: dict[str, object]) -> np.ndarray:
+        if task == "emotion":
+            emotion = str(options.get("emotion", "calm"))
+            return convert_emotion(chunk, self.sample_rate, emotion)
+
         if task == "gender_age":
             mode = str(options.get("mode", "male_to_female"))
             return convert_gender_age(chunk, self.sample_rate, mode)

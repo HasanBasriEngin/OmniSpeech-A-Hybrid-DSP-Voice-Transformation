@@ -28,6 +28,20 @@ def test_gender_age_file_conversion():
     assert result.metrics["processing_seconds"] >= 0.0
 
 
+def test_emotion_file_conversion():
+    source = _sine()
+    tmp_dir = Path(".tmp") / "tests"
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+    source_path = tmp_dir / "emotion_in.wav"
+    sf.write(str(source_path), source, 22050)
+
+    pipeline = VoiceConversionPipeline(sample_rate=22050)
+    result = pipeline.convert_emotion_file(str(source_path), emotion="calm")
+
+    assert result.output_path.endswith(".wav")
+    assert result.metrics["processing_seconds"] >= 0.0
+
+
 def test_live_chunk_processing_without_virtual_mic():
     pipeline = VoiceConversionPipeline(sample_rate=22050)
     manager = LiveSessionManager(pipeline=pipeline, sample_rate=22050)
@@ -35,6 +49,23 @@ def test_live_chunk_processing_without_virtual_mic():
     session = manager.start_session(
         task="gender_age",
         options={"mode": "male_to_female"},
+        route_to_virtual_mic=False,
+        virtual_mic_device=None,
+    )
+
+    out = manager.process_chunk(session.session_id, _sine(duration=0.1))
+    manager.stop_session(session.session_id)
+
+    assert out.size > 0
+
+
+def test_live_chunk_processing_for_emotion():
+    pipeline = VoiceConversionPipeline(sample_rate=22050)
+    manager = LiveSessionManager(pipeline=pipeline, sample_rate=22050)
+
+    session = manager.start_session(
+        task="emotion",
+        options={"emotion": "excited"},
         route_to_virtual_mic=False,
         virtual_mic_device=None,
     )
