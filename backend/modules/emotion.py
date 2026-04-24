@@ -77,7 +77,14 @@ def _match_target_rms(audio: np.ndarray, target_rms: float) -> np.ndarray:
     return np.asarray(scaled, dtype=np.float32)
 
 
-def convert_emotion(audio: np.ndarray, sample_rate: int, emotion: str) -> np.ndarray:
+def convert_emotion(
+    audio: np.ndarray,
+    sample_rate: int,
+    emotion: str,
+    pitch_override: float | None = None,
+    rate_override: float | None = None,
+    energy_override: float | None = None,
+) -> np.ndarray:
     profile = EMOTION_PROFILES.get(emotion)
     if profile is None:
         allowed = ", ".join(sorted(EMOTION_PROFILES))
@@ -87,10 +94,14 @@ def convert_emotion(audio: np.ndarray, sample_rate: int, emotion: str) -> np.nda
     if source.size == 0:
         return source
 
-    pitched = librosa.effects.pitch_shift(y=source, sr=sample_rate, n_steps=profile["pitch_shift"])
+    pitch_shift = float(profile["pitch_shift"] if pitch_override is None else np.clip(pitch_override, -8.0, 8.0))
+    rate = float(profile["rate"] if rate_override is None else np.clip(rate_override, 0.6, 1.5))
+    energy = float(1.0 if energy_override is None else np.clip(energy_override, 0.2, 2.0))
+
+    pitched = librosa.effects.pitch_shift(y=source, sr=sample_rate, n_steps=pitch_shift)
 
     if source.size >= 2048:
-        stretched = librosa.effects.time_stretch(y=np.asarray(pitched, dtype=np.float32), rate=profile["rate"])
+        stretched = librosa.effects.time_stretch(y=np.asarray(pitched, dtype=np.float32), rate=rate)
     else:
         stretched = np.asarray(pitched, dtype=np.float32)
 
@@ -99,7 +110,7 @@ def convert_emotion(audio: np.ndarray, sample_rate: int, emotion: str) -> np.nda
     driven = np.tanh(np.asarray(expressive * profile["drive"], dtype=np.float32))
     presence_boost = 0.18 if emotion == "sad" else 0.52 if emotion == "angry" else 0.4 if emotion == "excited" else 0.12
     tilted = _apply_spectral_tilt(driven, profile["spectral_tilt"], presence_boost)
-    scaled = _match_target_rms(tilted, profile["target_rms"])
+    scaled = _match_target_rms(tilted, profile["target_rms"] * energy)
 
     if emotion == "whisper":
         breath = np.concatenate([[0.0], np.diff(scaled)]).astype(np.float32)

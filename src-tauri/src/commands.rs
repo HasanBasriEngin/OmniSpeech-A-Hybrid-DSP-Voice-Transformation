@@ -1,4 +1,6 @@
 use serde_json::{json, Value};
+use std::fs;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::AppHandle;
 use tauri_plugin_dialog::{DialogExt, FilePath};
 
@@ -80,14 +82,39 @@ pub async fn pick_midi_file(app: AppHandle) -> Result<Option<String>, String> {
 }
 
 #[tauri::command]
+pub fn save_recording_wav(bytes: Vec<u8>) -> Result<String, String> {
+    if bytes.is_empty() {
+        return Err("Recording is empty".to_string());
+    }
+
+    let mut dir = std::env::temp_dir();
+    dir.push("omnispeech-recordings");
+    fs::create_dir_all(&dir).map_err(|err| format!("Failed to create recording directory: {err}"))?;
+
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|err| format!("System clock error: {err}"))?
+        .as_millis();
+    let path = dir.join(format!("mic_recording_{timestamp}.wav"));
+    fs::write(&path, bytes).map_err(|err| format!("Failed to save recording: {err}"))?;
+    Ok(path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
 pub async fn convert_emotion(
     input_path: String,
     emotion: String,
+    pitch_override: Option<f64>,
+    rate_override: Option<f64>,
+    energy_override: Option<f64>,
     output_path: Option<String>,
 ) -> Result<ConversionResponse, String> {
     let payload = json!({
         "input_path": input_path,
         "emotion": emotion,
+        "pitch_override": pitch_override,
+        "rate_override": rate_override,
+        "energy_override": energy_override,
         "output_path": output_path,
     });
     let response = backend::post("/api/convert/emotion", payload).await?;

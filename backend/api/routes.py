@@ -34,6 +34,9 @@ def build_router(pipeline: VoiceConversionPipeline, live_manager: LiveSessionMan
             result = pipeline.convert_emotion_file(
                 input_path=payload.input_path,
                 emotion=payload.emotion,
+                pitch_override=payload.pitch_override,
+                rate_override=payload.rate_override,
+                energy_override=payload.energy_override,
                 output_path=payload.output_path,
             )
             return ConversionResponse(output_path=result.output_path, metrics=result.metrics)

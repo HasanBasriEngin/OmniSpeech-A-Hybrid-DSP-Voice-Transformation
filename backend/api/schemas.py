@@ -18,6 +18,9 @@ class ConversionResponse(BaseModel):
 class EmotionRequest(BaseModel):
     input_path: str
     emotion: Literal["sad", "angry", "excited", "whisper", "calm"]
+    pitch_override: float | None = None
+    rate_override: float | None = None
+    energy_override: float | None = None
     output_path: str | None = None
 
 

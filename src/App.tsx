@@ -1,9 +1,11 @@
+import { convertFileSrc } from "@tauri-apps/api/core";
 import { useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 
 import { api } from "@/lib/tauri";
 
 type ModuleKey = "emotion" | "gender" | "speaker" | "singing";
 type EmotionKey = "sad" | "angry" | "excited" | "whisper" | "calm";
+type GenderMode = "male_to_female" | "female_to_male" | "adult_to_child" | "adult_to_elderly" | "child_to_adult";
 type NavigationKey = "workspace" | "evaluation" | "settings";
 type InputMode = "file" | "mic";
 type FeatureTab = "f0" | "mfcc" | "energy";
@@ -12,6 +14,17 @@ type LogEntry = {
   time: string;
   text: string;
   pending?: boolean;
+};
+
+type ConversionPayload = {
+  outputPath?: string;
+  output_path?: string;
+  metrics?: Record<string, number>;
+};
+
+type WaveformData = {
+  peaks: number[];
+  duration: number;
 };
 
 const TOTAL_DURATION = 2.8;
@@ -31,6 +44,22 @@ const emotionDescriptions: Record<EmotionKey, string> = {
   calm: "Balanced tone with smoother pacing",
 };
 
+const genderModeLabels: Record<GenderMode, string> = {
+  male_to_female: "Male to Female",
+  female_to_male: "Female to Male",
+  adult_to_child: "Adult to Child",
+  adult_to_elderly: "Adult to Elderly",
+  child_to_adult: "Child to Adult",
+};
+
+const genderModeDescriptions: Record<GenderMode, string> = {
+  male_to_female: "Higher pitch with a brighter vocal tract",
+  female_to_male: "Lower pitch with a deeper vocal tract",
+  adult_to_child: "Higher pitch and smaller vocal shape",
+  adult_to_elderly: "Softer pitch shift with aged timbre",
+  child_to_adult: "Lower pitch and fuller adult tone",
+};
+
 function nowClock() {
   return new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
@@ -46,7 +75,52 @@ function normalizeError(err: unknown) {
   return String(err);
 }
 
-function drawWave(canvas: HTMLCanvasElement | null, seed: number, colorA: string, colorB: string, amp: number) {
+function getAudioContextCtor() {
+  return window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+}
+
+async function buildWaveform(path: string, pointCount = 520): Promise<WaveformData> {
+  const AudioContextCtor = getAudioContextCtor();
+  if (!AudioContextCtor) {
+    throw new Error("AudioContext is not available in this webview");
+  }
+
+  const response = await fetch(convertFileSrc(path));
+  if (!response.ok) {
+    throw new Error(`Could not read audio file (${response.status})`);
+  }
+
+  const context = new AudioContextCtor();
+  try {
+    const bytes = await response.arrayBuffer();
+    const decoded = await context.decodeAudioData(bytes.slice(0));
+    const channel = decoded.getChannelData(0);
+    const bucketSize = Math.max(1, Math.floor(channel.length / pointCount));
+    const peaks: number[] = [];
+
+    for (let bucket = 0; bucket < pointCount; bucket += 1) {
+      const start = bucket * bucketSize;
+      const end = Math.min(channel.length, start + bucketSize);
+      let peak = 0;
+      for (let index = start; index < end; index += 1) {
+        peak = Math.max(peak, Math.abs(channel[index] ?? 0));
+      }
+      peaks.push(peak);
+    }
+
+    const maxPeak = Math.max(...peaks, 1e-5);
+    return {
+      peaks: peaks.map((peak) => peak / maxPeak),
+      duration: decoded.duration,
+    };
+  } finally {
+    if (context.state !== "closed") {
+      await context.close();
+    }
+  }
+}
+
+function drawWave(canvas: HTMLCanvasElement | null, waveform: WaveformData | null, colorA: string, colorB: string, playhead: number | null) {
   if (!canvas) {
     return;
   }
@@ -64,32 +138,68 @@ function drawWave(canvas: HTMLCanvasElement | null, seed: number, colorA: string
   const mid = canvas.height / 2;
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
+  if (!waveform || waveform.peaks.length === 0) {
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.1)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(0, mid);
+    ctx.lineTo(canvas.width, mid);
+    ctx.stroke();
+    return;
+  }
+
   const lineGradient = ctx.createLinearGradient(0, 0, canvas.width, 0);
   lineGradient.addColorStop(0, colorA);
   lineGradient.addColorStop(1, colorB);
+  const fillGradient = ctx.createLinearGradient(0, 0, 0, canvas.height);
+  fillGradient.addColorStop(0, `${colorA}42`);
+  fillGradient.addColorStop(0.5, `${colorB}16`);
+  fillGradient.addColorStop(1, `${colorA}42`);
 
+  const peaks = waveform.peaks;
+  const step = canvas.width / Math.max(1, peaks.length - 1);
   ctx.beginPath();
-  for (let x = 0; x < canvas.width; x += 1) {
-    const t = x / canvas.width;
-    const y =
-      mid +
-      amp *
-        (Math.sin(t * 28 + seed) * 0.5 +
-          Math.sin(t * 71 + seed * 1.3) * 0.25 +
-          Math.sin(t * 130 + seed * 0.7) * 0.12 +
-          Math.sin(t * 9 + seed * 2) * 0.13) *
-        Math.sin(t * Math.PI);
-
-    if (x === 0) {
+  peaks.forEach((peak, index) => {
+    const x = index * step;
+    const y = mid - peak * 36;
+    if (index === 0) {
       ctx.moveTo(x, y);
     } else {
       ctx.lineTo(x, y);
     }
+  });
+  for (let index = peaks.length - 1; index >= 0; index -= 1) {
+    const x = index * step;
+    const y = mid + peaks[index] * 36;
+    ctx.lineTo(x, y);
   }
+  ctx.closePath();
+  ctx.fillStyle = fillGradient;
+  ctx.fill();
 
+  ctx.beginPath();
+  peaks.forEach((peak, index) => {
+    const x = index * step;
+    const y = mid - peak * 32;
+    if (index === 0) {
+      ctx.moveTo(x, y);
+    } else {
+      ctx.lineTo(x, y);
+    }
+  });
   ctx.strokeStyle = lineGradient;
   ctx.lineWidth = 1.5;
   ctx.stroke();
+
+  if (playhead !== null) {
+    const x = Math.max(0, Math.min(1, playhead)) * canvas.width;
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.9)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, canvas.height);
+    ctx.stroke();
+  }
 }
 
 function drawPitch(canvas: HTMLCanvasElement | null, tab: FeatureTab) {
@@ -135,15 +245,71 @@ function drawPitch(canvas: HTMLCanvasElement | null, tab: FeatureTab) {
 
 function formatTime(seconds: number) {
   const safe = Number.isFinite(seconds) ? Math.max(0, seconds) : 0;
-  const whole = Math.floor(safe);
-  const frac = Math.floor((safe - whole) * 10);
-  return `0:0${whole}.${frac}`;
+  const minutes = Math.floor(safe / 60);
+  const whole = Math.floor(safe % 60);
+  const frac = Math.floor((safe - Math.floor(safe)) * 10);
+  return `${minutes}:${whole.toString().padStart(2, "0")}.${frac}`;
+}
+
+function manualPitchHz(pitchSteps: number) {
+  return 220 * 2 ** (pitchSteps / 12);
+}
+
+function getOutputPath(result: ConversionPayload) {
+  return result.outputPath ?? result.output_path ?? null;
+}
+
+function mergeAudioChunks(chunks: Float32Array[]) {
+  const totalLength = chunks.reduce((total, chunk) => total + chunk.length, 0);
+  const merged = new Float32Array(totalLength);
+  let offset = 0;
+  chunks.forEach((chunk) => {
+    merged.set(chunk, offset);
+    offset += chunk.length;
+  });
+  return merged;
+}
+
+function writeAscii(view: DataView, offset: number, value: string) {
+  for (let index = 0; index < value.length; index += 1) {
+    view.setUint8(offset + index, value.charCodeAt(index));
+  }
+}
+
+function encodeWav(samples: Float32Array, sampleRate: number) {
+  const bytesPerSample = 2;
+  const buffer = new ArrayBuffer(44 + samples.length * bytesPerSample);
+  const view = new DataView(buffer);
+
+  writeAscii(view, 0, "RIFF");
+  view.setUint32(4, 36 + samples.length * bytesPerSample, true);
+  writeAscii(view, 8, "WAVE");
+  writeAscii(view, 12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * bytesPerSample, true);
+  view.setUint16(32, bytesPerSample, true);
+  view.setUint16(34, 8 * bytesPerSample, true);
+  writeAscii(view, 36, "data");
+  view.setUint32(40, samples.length * bytesPerSample, true);
+
+  let offset = 44;
+  samples.forEach((sample) => {
+    const clipped = Math.max(-1, Math.min(1, sample));
+    view.setInt16(offset, clipped < 0 ? clipped * 0x8000 : clipped * 0x7fff, true);
+    offset += bytesPerSample;
+  });
+
+  return new Uint8Array(buffer);
 }
 
 export default function App() {
   const [activeNav, setActiveNav] = useState<NavigationKey>("workspace");
   const [activeModule, setActiveModule] = useState<ModuleKey>("emotion");
   const [selectedEmotion, setSelectedEmotion] = useState<EmotionKey>("angry");
+  const [selectedGenderMode, setSelectedGenderMode] = useState<GenderMode>("male_to_female");
   const [inputMode, setInputMode] = useState<InputMode>("file");
   const [featureTab, setFeatureTab] = useState<FeatureTab>("f0");
 
@@ -151,6 +317,8 @@ export default function App() {
   const [referenceFiles, setReferenceFiles] = useState<string[]>([]);
   const [midiFile, setMidiFile] = useState<string | null>(null);
   const [outputPath, setOutputPath] = useState<string | null>(null);
+  const [originalWaveform, setOriginalWaveform] = useState<WaveformData | null>(null);
+  const [processedWaveform, setProcessedWaveform] = useState<WaveformData | null>(null);
   const [metrics, setMetrics] = useState<Record<string, number>>({});
 
   const [pitchValue, setPitchValue] = useState(1.5);
@@ -165,6 +333,9 @@ export default function App() {
   const [isConverting, setIsConverting] = useState(false);
   const [isLive, setIsLive] = useState(false);
   const [liveSessionId, setLiveSessionId] = useState<string | null>(null);
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordingSeconds, setRecordingSeconds] = useState(0);
+  const [recordedFile, setRecordedFile] = useState<string | null>(null);
   const [routeToVirtualMic, setRouteToVirtualMic] = useState(false);
   const [virtualMicDevices, setVirtualMicDevices] = useState<string[]>([]);
   const [selectedVirtualMic, setSelectedVirtualMic] = useState<string | null>(null);
@@ -177,13 +348,39 @@ export default function App() {
   const waveformOrigRef = useRef<HTMLCanvasElement | null>(null);
   const waveformProcRef = useRef<HTMLCanvasElement | null>(null);
   const pitchRef = useRef<HTMLCanvasElement | null>(null);
+  const outputAudioRef = useRef<HTMLAudioElement | null>(null);
   const rafRef = useRef<number | null>(null);
+  const liveSessionRef = useRef<string | null>(null);
+  const liveStreamRef = useRef<MediaStream | null>(null);
+  const liveAudioContextRef = useRef<AudioContext | null>(null);
+  const liveProcessorRef = useRef<ScriptProcessorNode | null>(null);
+  const liveSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
+  const liveProcessingRef = useRef(false);
+  const recordingStreamRef = useRef<MediaStream | null>(null);
+  const recordingAudioContextRef = useRef<AudioContext | null>(null);
+  const recordingProcessorRef = useRef<ScriptProcessorNode | null>(null);
+  const recordingSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
+  const recordingChunksRef = useRef<Float32Array[]>([]);
+  const recordingSampleRateRef = useRef(44100);
+  const recordingStartedAtRef = useRef(0);
+  const recordingTimerRef = useRef<number | null>(null);
 
   const addLog = (text: string, pending = false) => {
     setLogEntries((prev) => [...prev, { time: nowClock(), text, pending }].slice(-100));
   };
 
   const moduleButtons = useMemo(() => (Object.keys(moduleMeta) as ModuleKey[]).map((key) => ({ key, ...moduleMeta[key] })), []);
+  const activeTask = useMemo(
+    () =>
+      activeModule === "emotion"
+        ? "emotion"
+        : activeModule === "speaker"
+          ? "speaker_clone"
+          : activeModule === "singing"
+            ? "singing"
+            : "gender_age",
+    [activeModule],
+  );
 
   const metricValues = useMemo(() => {
     const processingSeconds = metrics.processing_seconds ?? 1.4;
@@ -194,8 +391,10 @@ export default function App() {
   }, [metrics]);
 
   const redraw = () => {
-    drawWave(waveformOrigRef.current, 1.0 + progress, "#6c63ff", "#22d3b0", 28);
-    drawWave(waveformProcRef.current, 2.4 + pitchValue / 2 + rateValue + energyValue / 3, "#22d3b0", "#a78bfa", 22);
+    const originalPlayhead = sourceFile && !outputPath ? progress : null;
+    const processedPlayhead = outputPath ? progress : null;
+    drawWave(waveformOrigRef.current, originalWaveform, "#6c63ff", "#22d3b0", originalPlayhead);
+    drawWave(waveformProcRef.current, processedWaveform, "#22d3b0", "#a78bfa", processedPlayhead);
     drawPitch(pitchRef.current, featureTab);
   };
 
@@ -216,6 +415,17 @@ export default function App() {
     }
   };
 
+  const stopBackend = async () => {
+    await stopLive(false);
+    try {
+      await api.stopBackend();
+      setBackendReady(false);
+      addLog("Backend stopped");
+    } catch (err) {
+      addLog(`Backend stop failed: ${normalizeError(err)}`, true);
+    }
+  };
+
   const refreshVirtualMics = async () => {
     try {
       const devices = await api.listVirtualMics();
@@ -233,6 +443,8 @@ export default function App() {
     try {
       const selected = await api.pickAudioFile();
       if (selected) {
+        stopPlayback();
+        setOutputPath(null);
         setSourceFile(selected);
         setInputMode("file");
         addLog(`Input selected: ${basename(selected)}`);
@@ -268,10 +480,184 @@ export default function App() {
     }
   };
 
+  const stopRecording = async (save = true) => {
+    const chunks = [...recordingChunksRef.current];
+
+    recordingProcessorRef.current?.disconnect();
+    recordingSourceRef.current?.disconnect();
+    recordingStreamRef.current?.getTracks().forEach((track) => track.stop());
+    if (recordingAudioContextRef.current && recordingAudioContextRef.current.state !== "closed") {
+      await recordingAudioContextRef.current.close();
+    }
+    if (recordingTimerRef.current !== null) {
+      window.clearInterval(recordingTimerRef.current);
+    }
+
+    recordingProcessorRef.current = null;
+    recordingSourceRef.current = null;
+    recordingStreamRef.current = null;
+    recordingAudioContextRef.current = null;
+    recordingTimerRef.current = null;
+    recordingChunksRef.current = [];
+    setIsRecording(false);
+
+    if (!save) {
+      setRecordingSeconds(0);
+      return null;
+    }
+
+    const totalSamples = chunks.reduce((total, chunk) => total + chunk.length, 0);
+    if (totalSamples === 0) {
+      addLog("Recording did not capture audio", true);
+      return null;
+    }
+
+    try {
+      const wavBytes = encodeWav(mergeAudioChunks(chunks), recordingSampleRateRef.current);
+      const path = await api.saveRecordingWav(Array.from(wavBytes));
+      stopPlayback();
+      setOutputPath(null);
+      setSourceFile(path);
+      setRecordedFile(path);
+      setInputMode("mic");
+      setRecordingSeconds(Number(((Date.now() - recordingStartedAtRef.current) / 1000).toFixed(1)));
+      addLog(`Mic recording saved: ${basename(path)}`);
+      return path;
+    } catch (err) {
+      addLog(`Recording save failed: ${normalizeError(err)}`, true);
+      return null;
+    }
+  };
+
+  const startRecording = async () => {
+    if (isRecording) {
+      return;
+    }
+
+    if (isLive) {
+      await stopLive(false);
+    }
+
+    if (!navigator.mediaDevices?.getUserMedia) {
+      addLog("Microphone recording is not available in this webview", true);
+      return;
+    }
+
+    const AudioContextCtor =
+      window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!AudioContextCtor) {
+      addLog("AudioContext is not available in this webview", true);
+      return;
+    }
+
+    try {
+      await stopRecording(false);
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+      });
+      const context = new AudioContextCtor();
+      const source = context.createMediaStreamSource(stream);
+      const processor = context.createScriptProcessor(4096, 1, 1);
+
+      recordingChunksRef.current = [];
+      recordingSampleRateRef.current = context.sampleRate;
+      recordingStartedAtRef.current = Date.now();
+      setRecordedFile(null);
+      setRecordingSeconds(0);
+      setInputMode("mic");
+
+      processor.onaudioprocess = (event) => {
+        event.outputBuffer.getChannelData(0).fill(0);
+        recordingChunksRef.current.push(new Float32Array(event.inputBuffer.getChannelData(0)));
+      };
+
+      source.connect(processor);
+      processor.connect(context.destination);
+
+      recordingStreamRef.current = stream;
+      recordingAudioContextRef.current = context;
+      recordingSourceRef.current = source;
+      recordingProcessorRef.current = processor;
+      recordingTimerRef.current = window.setInterval(() => {
+        setRecordingSeconds((Date.now() - recordingStartedAtRef.current) / 1000);
+      }, 150);
+      setIsRecording(true);
+      addLog("Mic recording started");
+    } catch (err) {
+      await stopRecording(false);
+      addLog(`Mic recording failed: ${normalizeError(err)}`, true);
+    }
+  };
+
+  const stopLiveCapture = async () => {
+    liveProcessorRef.current?.disconnect();
+    liveSourceRef.current?.disconnect();
+    liveStreamRef.current?.getTracks().forEach((track) => track.stop());
+    if (liveAudioContextRef.current && liveAudioContextRef.current.state !== "closed") {
+      await liveAudioContextRef.current.close();
+    }
+    liveProcessorRef.current = null;
+    liveSourceRef.current = null;
+    liveStreamRef.current = null;
+    liveAudioContextRef.current = null;
+    liveProcessingRef.current = false;
+  };
+
+  const startLiveCapture = async (sessionId: string) => {
+    if (!navigator.mediaDevices?.getUserMedia) {
+      addLog("Microphone capture is not available in this webview", true);
+      return;
+    }
+
+    const AudioContextCtor =
+      window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!AudioContextCtor) {
+      addLog("AudioContext is not available in this webview", true);
+      return;
+    }
+
+    await stopLiveCapture();
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+    });
+    const context = new AudioContextCtor();
+    const source = context.createMediaStreamSource(stream);
+    const processor = context.createScriptProcessor(1024, 1, 1);
+
+    processor.onaudioprocess = (event) => {
+      event.outputBuffer.getChannelData(0).fill(0);
+      if (liveProcessingRef.current || liveSessionRef.current !== sessionId) {
+        return;
+      }
+
+      liveProcessingRef.current = true;
+      const chunk = Array.from(event.inputBuffer.getChannelData(0));
+      void api
+        .processLiveChunk(sessionId, chunk)
+        .catch((err) => addLog(`Live audio chunk failed: ${normalizeError(err)}`, true))
+        .finally(() => {
+          liveProcessingRef.current = false;
+        });
+    };
+
+    source.connect(processor);
+    processor.connect(context.destination);
+
+    liveStreamRef.current = stream;
+    liveAudioContextRef.current = context;
+    liveSourceRef.current = source;
+    liveProcessorRef.current = processor;
+    addLog("Microphone stream connected");
+  };
+
   const stopLive = async (log = true) => {
-    if (liveSessionId) {
+    const sessionToStop = liveSessionRef.current ?? liveSessionId;
+    liveSessionRef.current = null;
+    await stopLiveCapture();
+
+    if (sessionToStop) {
       try {
-        await api.stopLiveSession(liveSessionId);
+        await api.stopLiveSession(sessionToStop);
       } catch (err) {
         addLog(`Stop live failed: ${normalizeError(err)}`, true);
       }
@@ -290,42 +676,113 @@ export default function App() {
       return;
     }
 
+    if (isRecording) {
+      await stopRecording(false);
+    }
+
     const ready = await ensureBackend();
     if (!ready) {
       return;
     }
 
+    let startedSessionId: string | null = null;
     try {
-      const task =
-        activeModule === "emotion"
-          ? "emotion"
-          : activeModule === "speaker"
-            ? "speaker_clone"
-            : activeModule === "singing"
-              ? "singing"
-              : "gender_age";
-
       const sessionId = await api.startLiveSession(
-        task,
+        activeTask,
         {
           emotion: selectedEmotion,
-          mode: "male_to_female",
+          mode: selectedGenderMode,
           midi_path: midiFile,
+          pitch_contour: activeModule === "singing" && !midiFile ? [manualPitchHz(pitchValue)] : null,
           reference_paths: referenceFiles,
-          pitch_ratio: pitchValue,
-          speech_rate: rateValue,
-          energy_envelope: energyValue,
+          pitch_override: pitchValue,
+          rate_override: rateValue,
+          energy_override: energyValue,
         },
         routeToVirtualMic,
         selectedVirtualMic,
       );
 
+      startedSessionId = sessionId;
+      liveSessionRef.current = sessionId;
       setLiveSessionId(sessionId);
       setIsLive(true);
       setInputMode("mic");
-      addLog(`Live session started (${task})`);
+      addLog(`Live session started (${activeTask})`);
+      await startLiveCapture(sessionId);
     } catch (err) {
+      if (startedSessionId) {
+        try {
+          await api.stopLiveSession(startedSessionId);
+        } catch {
+          // The start failure is the useful message for the user-facing log.
+        }
+      }
+      liveSessionRef.current = null;
+      setLiveSessionId(null);
+      setIsLive(false);
+      await stopLiveCapture();
       addLog(`Live start failed: ${normalizeError(err)}`, true);
+    }
+  };
+
+  const stopPlayback = () => {
+    const audio = outputAudioRef.current;
+    if (audio) {
+      audio.pause();
+      audio.currentTime = 0;
+    }
+    setPlaying(false);
+    setProgress(0);
+  };
+
+  const loadPlaybackAudio = (path: string) => {
+    const audio = outputAudioRef.current;
+    if (!audio) {
+      return;
+    }
+
+    audio.pause();
+    audio.src = convertFileSrc(path);
+    audio.currentTime = 0;
+    audio.load();
+    setPlaying(false);
+    setProgress(0);
+  };
+
+  const togglePlayback = async () => {
+    const playbackPath = outputPath ?? sourceFile;
+    if (!playbackPath) {
+      addLog("Once bir ses dosyasi sec veya MIC ile kayit al.", true);
+      return;
+    }
+
+    const audio = outputAudioRef.current;
+    if (!audio) {
+      addLog("Audio player is not ready", true);
+      return;
+    }
+
+    const src = convertFileSrc(playbackPath);
+    if (audio.src !== src) {
+      audio.src = src;
+      audio.load();
+    }
+
+    if (!audio.paused) {
+      audio.pause();
+      return;
+    }
+
+    if (audio.ended || (Number.isFinite(audio.duration) && audio.currentTime >= audio.duration)) {
+      audio.currentTime = 0;
+    }
+
+    try {
+      await audio.play();
+      addLog(`${outputPath ? "Playing processed audio" : "Playing original audio"}: ${basename(playbackPath)}`);
+    } catch (err) {
+      addLog(`Playback failed: ${normalizeError(err)}`, true);
     }
   };
 
@@ -352,21 +809,13 @@ export default function App() {
     addLog(`Conversion started for ${activeModule}`, true);
 
     try {
-      const task =
-        activeModule === "emotion"
-          ? "emotion"
-          : activeModule === "speaker"
-            ? "speaker_clone"
-            : activeModule === "singing"
-              ? "singing"
-              : "gender_age";
-      let result: { outputPath: string; metrics: Record<string, number> };
+      let result: ConversionPayload;
 
-      if (task === "emotion") {
-        result = await api.convertEmotion(inputPath, selectedEmotion, null);
-      } else if (task === "gender_age") {
-        result = await api.convertGenderAge(inputPath, "male_to_female", null);
-      } else if (task === "speaker_clone") {
+      if (activeTask === "emotion") {
+        result = await api.convertEmotion(inputPath, selectedEmotion, pitchValue, rateValue, energyValue, null);
+      } else if (activeTask === "gender_age") {
+        result = await api.convertGenderAge(inputPath, selectedGenderMode, null);
+      } else if (activeTask === "speaker_clone") {
         let refs = referenceFiles;
         if (refs.length === 0) {
           refs = await pickReferences();
@@ -376,16 +825,23 @@ export default function App() {
         }
         result = await api.convertSpeakerClone(inputPath, refs, null);
       } else {
-        result = await api.convertSinging(inputPath, midiFile, null, null);
+        const pitchContour = midiFile ? null : [manualPitchHz(pitchValue)];
+        result = await api.convertSinging(inputPath, midiFile, pitchContour, null);
       }
 
-      setOutputPath(result.outputPath);
+      const nextOutputPath = getOutputPath(result);
+      if (!nextOutputPath) {
+        throw new Error("Backend did not return an output audio path");
+      }
+
+      setOutputPath(nextOutputPath);
+      loadPlaybackAudio(nextOutputPath);
       setMetrics(result.metrics ?? {});
       if (typeof result.metrics?.output_duration_seconds === "number" && result.metrics.output_duration_seconds > 0) {
         setPlaybackDuration(result.metrics.output_duration_seconds);
       }
 
-      addLog(`Output generated: ${basename(result.outputPath)}`);
+      addLog(`Output generated: ${basename(nextOutputPath)}`);
     } catch (err) {
       addLog(`Conversion failed: ${normalizeError(err)}`, true);
     } finally {
@@ -397,45 +853,71 @@ export default function App() {
     const rect = event.currentTarget.getBoundingClientRect();
     const next = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
     setProgress(next);
+    const audio = outputAudioRef.current;
+    if (audio && Number.isFinite(audio.duration) && audio.duration > 0) {
+      audio.currentTime = next * audio.duration;
+    }
   };
 
   useEffect(() => {
+    let cancelled = false;
+    if (!sourceFile) {
+      setOriginalWaveform(null);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    void buildWaveform(sourceFile)
+      .then((waveform) => {
+        if (cancelled) {
+          return;
+        }
+        setOriginalWaveform(waveform);
+        if (!outputPath) {
+          setPlaybackDuration(waveform.duration);
+        }
+      })
+      .catch((err) => addLog(`Original waveform failed: ${normalizeError(err)}`, true));
+
+    return () => {
+      cancelled = true;
+    };
+  }, [sourceFile, outputPath]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!outputPath) {
+      setProcessedWaveform(null);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    void buildWaveform(outputPath)
+      .then((waveform) => {
+        if (cancelled) {
+          return;
+        }
+        setProcessedWaveform(waveform);
+        setPlaybackDuration(waveform.duration);
+      })
+      .catch((err) => addLog(`Processed waveform failed: ${normalizeError(err)}`, true));
+
+    return () => {
+      cancelled = true;
+    };
+  }, [outputPath]);
+
+  useEffect(() => {
     redraw();
-  }, [pitchValue, rateValue, energyValue, featureTab, progress, activeModule]);
+  }, [pitchValue, rateValue, energyValue, featureTab, progress, activeModule, originalWaveform, processedWaveform, sourceFile, outputPath]);
 
   useEffect(() => {
     const onResize = () => redraw();
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
-  }, [pitchValue, rateValue, energyValue, featureTab, progress, activeModule]);
-
-  useEffect(() => {
-    if (!playing) {
-      if (rafRef.current) {
-        cancelAnimationFrame(rafRef.current);
-      }
-      return;
-    }
-
-    const tick = () => {
-      setProgress((prev) => {
-        const next = prev + 1 / Math.max(30, playbackDuration * 60);
-        if (next >= 1) {
-          window.setTimeout(() => setPlaying(false), 0);
-          return 1;
-        }
-        return next;
-      });
-      rafRef.current = requestAnimationFrame(tick);
-    };
-
-    rafRef.current = requestAnimationFrame(tick);
-    return () => {
-      if (rafRef.current) {
-        cancelAnimationFrame(rafRef.current);
-      }
-    };
-  }, [playing, playbackDuration]);
+  }, [pitchValue, rateValue, energyValue, featureTab, progress, activeModule, originalWaveform, processedWaveform, sourceFile, outputPath]);
 
   useEffect(() => {
     void ensureBackend();
@@ -445,13 +927,25 @@ export default function App() {
       if (rafRef.current) {
         cancelAnimationFrame(rafRef.current);
       }
+      void stopRecording(false);
       void stopLive(false);
     };
   }, []);
 
   const statusText = isLive ? "live" : backendReady ? "ready" : "offline";
   const statusColor = isLive || backendReady ? "#22d3b0" : "#f87171";
-  const modeInfo = activeModule === "emotion" ? emotionDescriptions[selectedEmotion] : "male_to_female";
+  const modeInfo =
+    activeModule === "emotion"
+      ? emotionDescriptions[selectedEmotion]
+      : activeModule === "gender"
+        ? genderModeDescriptions[selectedGenderMode]
+        : activeModule === "singing"
+          ? midiFile
+            ? `MIDI: ${basename(midiFile)}`
+            : `Manual target: ${Math.round(manualPitchHz(pitchValue))} Hz`
+          : referenceFiles.length
+            ? `${referenceFiles.length} reference file${referenceFiles.length > 1 ? "s" : ""}`
+            : "Reference files required";
   const speakerReferencesRequired = activeModule === "speaker";
   const singingMidiSuggested = activeModule === "singing";
   const convertBlockedReason = speakerReferencesRequired && referenceFiles.length === 0 ? "Speaker / Clone icin en az bir referans dosyasi sec." : null;
@@ -470,8 +964,8 @@ export default function App() {
         <div className="topbar-right">
           <div className="status-dot" style={{ background: statusColor, boxShadow: `0 0 6px ${statusColor}` }}></div>
           <span className="status-text">{statusText}</span>
-          <div className="tag">CPU - 12% load</div>
-          <div className="tag">{isLive ? "Live Active" : "Desktop Mode"}</div>
+          <div className="tag">{moduleMeta[activeModule].label}</div>
+          <div className="tag">{inputMode === "mic" ? "Mic Input" : "File Input"}</div>
         </div>
       </header>
 
@@ -488,6 +982,10 @@ export default function App() {
             className={`nav-item nav-button ${activeModule === item.key ? "active" : ""}`}
             key={item.key}
             onClick={() => {
+              if (isLive) {
+                void stopLive(false);
+              }
+              setActiveNav("workspace");
               setActiveModule(item.key);
               addLog(`Module selected: ${item.label}`);
             }}
@@ -517,16 +1015,28 @@ export default function App() {
               <div className="section-header">
                 <span className="section-title">// audio_input</span>
                 <div className="section-controls">
-                  <button className={`btn-xs ${inputMode === "file" ? "active" : ""}`} onClick={() => setInputMode("file")} type="button">
+                  <button
+                    className={`btn-xs ${inputMode === "file" ? "active" : ""}`}
+                    onClick={() => {
+                      setInputMode("file");
+                      if (isLive) {
+                        void stopLive();
+                      }
+                      if (isRecording) {
+                        void stopRecording(false);
+                      }
+                    }}
+                    type="button"
+                  >
                     FILE
                   </button>
-                  <button className={`btn-xs ${inputMode === "mic" ? "active" : ""}`} onClick={() => void startLive()} type="button">
+                  <button className={`btn-xs ${inputMode === "mic" ? "active" : ""}`} onClick={() => setInputMode("mic")} type="button">
                     MIC
                   </button>
                 </div>
               </div>
 
-              <div className={`drop-zone ${sourceFile ? "loaded" : ""}`} onClick={() => void (inputMode === "file" ? pickSource() : startLive())}>
+              <div className={`drop-zone ${sourceFile ? "loaded" : ""} ${inputMode === "mic" ? "static" : ""}`} onClick={() => void (inputMode === "file" ? pickSource() : undefined)}>
                 <div className="drop-zone-title">
                   {inputMode === "file"
                     ? sourceFile
@@ -534,10 +1044,20 @@ export default function App() {
                       : "Drop audio file here"
                     : isLive
                       ? "Microphone live session running"
-                      : "Start live microphone session"}
+                      : recordedFile
+                        ? `${basename(recordedFile)} ready`
+                        : "Microphone recorder"}
                 </div>
                 <div className="drop-zone-sub">
-                  {inputMode === "file" ? (sourceFile ? "Click to pick another file" : "or click to browse") : isLive ? `Session: ${liveSessionId?.slice(0, 8) ?? "active"}` : "Click to start live mode"}
+                  {inputMode === "file"
+                    ? sourceFile
+                      ? "Click to pick another file"
+                      : "or click to browse"
+                    : isLive
+                      ? `Session: ${liveSessionId?.slice(0, 8) ?? "active"}`
+                      : recordedFile
+                        ? "Use Convert Audio or record again"
+                        : "Press Record to capture a WAV input"}
                 </div>
                 <div className="fmt-tags">
                   <span className="fmt-tag">WAV</span>
@@ -545,29 +1065,51 @@ export default function App() {
                   <span className="fmt-tag">FLAC</span>
                   <span className="fmt-tag">16kHz/22kHz</span>
                 </div>
+                {inputMode === "mic" ? (
+                  <div className="recorder-panel" onClick={(event) => event.stopPropagation()}>
+                    <div className={`recording-dot ${isRecording ? "active" : ""}`}></div>
+                    <div className="recording-time">{recordingSeconds.toFixed(1)}s</div>
+                    {isRecording ? (
+                      <button className="btn-xs active" onClick={() => void stopRecording(true)} type="button">
+                        Stop & Save
+                      </button>
+                    ) : (
+                      <button className="btn-xs active" onClick={() => void startRecording()} type="button">
+                        Record
+                      </button>
+                    )}
+                    {recordedFile ? <span className="recording-file">{basename(recordedFile)}</span> : null}
+                  </div>
+                ) : null}
               </div>
 
-              <div className="action-row">
-                <button className="btn-xs" onClick={() => void pickSource()} type="button">Select Source</button>
-                <button className={`btn-xs ${speakerReferencesRequired ? "active" : ""}`} onClick={() => void pickReferences()} type="button">
-                  {speakerReferencesRequired ? "References Required" : "References"}
-                </button>
-                <button className={`btn-xs ${singingMidiSuggested ? "active" : ""}`} onClick={() => void pickMidi()} type="button">
-                  {singingMidiSuggested ? "MIDI Suggested" : "MIDI"}
-                </button>
-                <button className="btn-xs" onClick={() => void refreshVirtualMics()} type="button">Refresh VMic</button>
-              </div>
+              {(speakerReferencesRequired || singingMidiSuggested) ? (
+                <div className="action-row contextual">
+                  {speakerReferencesRequired ? (
+                    <button className="btn-xs active" onClick={() => void pickReferences()} type="button">
+                      {referenceFiles.length ? "Change References" : "Select References"}
+                    </button>
+                  ) : null}
+                  {singingMidiSuggested ? (
+                    <button className="btn-xs active" onClick={() => void pickMidi()} type="button">
+                      {midiFile ? "Change MIDI" : "Select MIDI"}
+                    </button>
+                  ) : null}
+                </div>
+              ) : null}
 
               <div className={`mini-note ${convertBlockedReason ? "warn" : ""}`}>
                 {convertBlockedReason
                   ? convertBlockedReason
                   : activeModule === "emotion"
                     ? `${selectedEmotion} emotion profili secili ve donusume hazir.`
-                  : singingMidiSuggested
-                    ? "Singing modu icin MIDI secerek melodiyi yonlendirebilirsin."
-                    : speakerReferencesRequired
-                      ? `${referenceFiles.length} referans dosyasi hazir.`
-                      : "Mevcut modul icin ek giris secimi opsiyonel."}
+                    : activeModule === "gender"
+                      ? `${genderModeLabels[selectedGenderMode]} modu secili ve donusume hazir.`
+                      : singingMidiSuggested
+                        ? midiFile
+                          ? "Singing modu secilen MIDI melodisini kullanacak."
+                          : "Singing modu pitch slider'indan hedef nota uretecek."
+                        : `${referenceFiles.length} referans dosyasi hazir.`}
               </div>
 
               <div className="selection-strip">
@@ -579,10 +1121,18 @@ export default function App() {
                   <span className="selection-label">Source</span>
                   <span className="selection-value">{sourceFile ? basename(sourceFile) : "Not selected"}</span>
                 </div>
-                <div className={`selection-chip ${referenceFiles.length > 0 ? "ok" : speakerReferencesRequired ? "warn" : ""}`}>
-                  <span className="selection-label">References</span>
+                <div className={`selection-chip ${referenceFiles.length > 0 || activeModule === "gender" || activeModule === "emotion" ? "ok" : speakerReferencesRequired ? "warn" : ""}`}>
+                  <span className="selection-label">
+                    {activeModule === "emotion" ? "Emotion" : activeModule === "gender" ? "Mode" : "References"}
+                  </span>
                   <span className="selection-value">
-                    {referenceFiles.length > 0 ? `${referenceFiles.length} file${referenceFiles.length > 1 ? "s" : ""}` : "None"}
+                    {activeModule === "emotion"
+                      ? selectedEmotion
+                      : activeModule === "gender"
+                        ? genderModeLabels[selectedGenderMode]
+                        : referenceFiles.length > 0
+                          ? `${referenceFiles.length} file${referenceFiles.length > 1 ? "s" : ""}`
+                          : "None"}
                   </span>
                 </div>
                 <div className={`selection-chip ${midiFile ? "ok" : singingMidiSuggested ? "active" : ""}`}>
@@ -603,7 +1153,7 @@ export default function App() {
               </div>
 
               <div className="playback-bar">
-                <button className="play-btn" onClick={() => setPlaying((v) => !v)} type="button">
+                <button className="play-btn" disabled={!outputPath && !sourceFile} onClick={() => void togglePlayback()} type="button">
                   {playing ? "||" : ">"}
                 </button>
                 <div className="progress-wrap">
@@ -613,6 +1163,29 @@ export default function App() {
                   </div>
                 </div>
                 <span className="time-text">{formatTime(progress * playbackDuration)} / {formatTime(playbackDuration)}</span>
+                <audio
+                  onEnded={() => {
+                    setPlaying(false);
+                    setProgress(1);
+                  }}
+                  onLoadedMetadata={(event) => {
+                    const duration = event.currentTarget.duration;
+                    if (Number.isFinite(duration) && duration > 0) {
+                      setPlaybackDuration(duration);
+                    }
+                  }}
+                  onPause={() => setPlaying(false)}
+                  onPlay={() => setPlaying(true)}
+                  onTimeUpdate={(event) => {
+                    const audio = event.currentTarget;
+                    if (Number.isFinite(audio.duration) && audio.duration > 0) {
+                      setPlaybackDuration(audio.duration);
+                      setProgress(Math.max(0, Math.min(1, audio.currentTime / audio.duration)));
+                    }
+                  }}
+                  preload="metadata"
+                  ref={outputAudioRef}
+                />
               </div>
             </section>
 
@@ -630,18 +1203,76 @@ export default function App() {
               </div>
             </section>
           </>
+        ) : activeNav === "evaluation" ? (
+          <>
+            <section className="card">
+              <div className="section-header">
+                <span className="section-title">// evaluation</span>
+              </div>
+              <div className="status-grid">
+                <div className="status-tile">
+                  <span className="selection-label">Task</span>
+                  <span className="selection-value">{moduleMeta[activeModule].label}</span>
+                </div>
+                <div className="status-tile">
+                  <span className="selection-label">Mode</span>
+                  <span className="selection-value">{modeInfo}</span>
+                </div>
+                <div className="status-tile">
+                  <span className="selection-label">Input</span>
+                  <span className="selection-value">{sourceFile ? basename(sourceFile) : inputMode === "mic" ? "Microphone" : "Not selected"}</span>
+                </div>
+                <div className="status-tile">
+                  <span className="selection-label">Output</span>
+                  <span className="selection-value">{outputPath ? basename(outputPath) : "No conversion yet"}</span>
+                </div>
+              </div>
+            </section>
+
+            <section className="card">
+              <div className="section-header">
+                <span className="section-title">// metrics_detail</span>
+              </div>
+              <div className="detail-list">
+                {Object.entries(metrics).length ? (
+                  Object.entries(metrics).map(([key, value]) => (
+                    <div className="detail-row" key={key}>
+                      <span>{key}</span>
+                      <strong>{Number.isFinite(value) ? value.toFixed(3) : value}</strong>
+                    </div>
+                  ))
+                ) : (
+                  <div className="empty-state">Run a conversion to populate backend metrics.</div>
+                )}
+              </div>
+            </section>
+          </>
         ) : (
-          <section className="card">
-            <div className="section-header">
-              <span className="section-title">// {activeNav}</span>
-            </div>
-            <div className="action-row">
-              <button className="btn-xs" onClick={() => void ensureBackend()} type="button">Start Backend</button>
-              <button className="btn-xs" onClick={() => void api.stopBackend().then(() => { setBackendReady(false); addLog("Backend stopped"); })} type="button">Stop Backend</button>
-              <button className="btn-xs" onClick={() => void refreshVirtualMics()} type="button">Refresh VMic</button>
-              <button className="btn-xs" onClick={() => void startLive()} type="button">{isLive ? "Stop Live" : "Start Live"}</button>
-            </div>
-          </section>
+          <>
+            <section className="card">
+              <div className="section-header">
+                <span className="section-title">// settings</span>
+              </div>
+              <div className="settings-grid">
+                <div className="detail-row">
+                  <span>Backend</span>
+                  <strong>{backendReady ? "ready" : "offline"}</strong>
+                </div>
+                <div className="detail-row">
+                  <span>Live session</span>
+                  <strong>{isLive ? liveSessionId?.slice(0, 8) ?? "active" : "stopped"}</strong>
+                </div>
+                <div className="detail-row">
+                  <span>Virtual mic devices</span>
+                  <strong>{virtualMicDevices.length}</strong>
+                </div>
+                <div className="settings-actions">
+                  <button className="btn-xs active" onClick={() => void ensureBackend()} type="button">Start Backend</button>
+                  <button className="btn-xs" onClick={() => void stopBackend()} type="button">Stop Backend</button>
+                </div>
+              </div>
+            </section>
+          </>
         )}
 
         <section className="metric-grid">
@@ -654,43 +1285,67 @@ export default function App() {
 
       <aside className="panel">
         <div>
-          <div className="panel-title">// MODULE_SELECT</div>
-          <div className="module-grid">
-            {moduleButtons.map((item) => (
-              <button
-                className={`module-btn ${activeModule === item.key ? `active-${item.key}` : ""}`}
-                key={`panel-${item.key}`}
-                onClick={() => {
-                  setActiveModule(item.key);
-                  addLog(`Module selected: ${item.label}`);
-                }}
-                type="button"
-              >
-                <span className="module-btn-label">{item.label}</span>
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div>
           <div className="panel-title">// PARAMETERS</div>
 
-          <div className="param-row">
-            <div className="param-header"><span className="param-name">Pitch Ratio</span><span className="param-val">{pitchValue >= 0 ? "+" : ""}{pitchValue.toFixed(1)} st</span></div>
-            <input type="range" min={-6} max={6} step={0.1} value={pitchValue} onChange={(e) => setPitchValue(Number(e.target.value))} />
-          </div>
+          {activeModule === "emotion" ? (
+            <>
+              <div className="param-row">
+                <div className="param-header"><span className="param-name">Pitch Shift</span><span className="param-val">{pitchValue >= 0 ? "+" : ""}{pitchValue.toFixed(1)} st</span></div>
+                <input type="range" min={-6} max={6} step={0.1} value={pitchValue} onChange={(e) => setPitchValue(Number(e.target.value))} />
+              </div>
 
-          <div className="param-row">
-            <div className="param-header"><span className="param-name">Speech Rate</span><span className="param-val teal">{rateValue.toFixed(2)}x</span></div>
-            <input type="range" className="teal" min={0.6} max={1.5} step={0.01} value={rateValue} onChange={(e) => setRateValue(Number(e.target.value))} />
-          </div>
+              <div className="param-row">
+                <div className="param-header"><span className="param-name">Speech Rate</span><span className="param-val teal">{rateValue.toFixed(2)}x</span></div>
+                <input type="range" className="teal" min={0.6} max={1.5} step={0.01} value={rateValue} onChange={(e) => setRateValue(Number(e.target.value))} />
+              </div>
 
-          <div className="param-row">
-            <div className="param-header"><span className="param-name">Energy Envelope</span><span className="param-val amber">{energyValue.toFixed(2)}x</span></div>
-            <input type="range" className="amber" min={0.2} max={2.0} step={0.05} value={energyValue} onChange={(e) => setEnergyValue(Number(e.target.value))} />
-          </div>
+              <div className="param-row">
+                <div className="param-header"><span className="param-name">Energy</span><span className="param-val amber">{energyValue.toFixed(2)}x</span></div>
+                <input type="range" className="amber" min={0.2} max={2.0} step={0.05} value={energyValue} onChange={(e) => setEnergyValue(Number(e.target.value))} />
+              </div>
+            </>
+          ) : null}
 
-          <div>
+          {activeModule === "singing" ? (
+            <div className="param-row">
+              <div className="param-header">
+                <span className="param-name">Manual Target</span>
+                <span className="param-val">{Math.round(manualPitchHz(pitchValue))} Hz</span>
+              </div>
+              <input type="range" min={-12} max={12} step={0.1} value={pitchValue} onChange={(e) => setPitchValue(Number(e.target.value))} />
+              <div className="mini-note">{midiFile ? "MIDI selected, manual target is ignored." : "Used when no MIDI file is selected."}</div>
+            </div>
+          ) : null}
+
+          {activeModule === "speaker" ? (
+            <div className={`mini-note ${referenceFiles.length ? "" : "warn"}`}>
+              {referenceFiles.length ? `${referenceFiles.length} reference file${referenceFiles.length > 1 ? "s" : ""} selected.` : "Select reference files from the audio input area."}
+            </div>
+          ) : null}
+
+          {activeModule === "gender" ? (
+            <div>
+              <div className="chip-row vertical">
+                {(Object.keys(genderModeLabels) as GenderMode[]).map((mode) => (
+                  <button
+                    className={`chip wide ${selectedGenderMode === mode ? "selected" : ""}`}
+                    key={mode}
+                    onClick={() => {
+                      setSelectedGenderMode(mode);
+                      addLog(`Gender mode set: ${genderModeLabels[mode]}`);
+                    }}
+                    type="button"
+                  >
+                    {genderModeLabels[mode]}
+                  </button>
+                ))}
+              </div>
+              <div className="mini-note">{genderModeDescriptions[selectedGenderMode]}</div>
+            </div>
+          ) : null}
+
+          {activeModule === "emotion" ? (
+            <div>
             <div className="panel-title">// TARGET_EMOTION</div>
             <div className="chip-row">
               {(["sad", "angry", "excited", "whisper", "calm"] as EmotionKey[]).map((emotion) => (
@@ -707,8 +1362,9 @@ export default function App() {
                 </button>
               ))}
             </div>
-            <div className="mini-note">Mapped preset: {modeInfo}</div>
+            <div className="mini-note">{modeInfo}</div>
           </div>
+          ) : null}
         </div>
 
         <div className="panel-live">

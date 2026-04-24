@@ -25,14 +25,35 @@ class VoiceConversionPipeline:
     def __init__(self, sample_rate: int) -> None:
         self.sample_rate = sample_rate
 
-    def convert_emotion_file(self, input_path: str, emotion: str, output_path: str | None = None) -> PipelineResult:
+    def convert_emotion_file(
+        self,
+        input_path: str,
+        emotion: str,
+        pitch_override: float | None = None,
+        rate_override: float | None = None,
+        energy_override: float | None = None,
+        output_path: str | None = None,
+    ) -> PipelineResult:
         source = load_audio_mono(input_path, self.sample_rate)
         start = perf_counter()
-        converted = convert_emotion(source, self.sample_rate, emotion)
+        converted = convert_emotion(
+            source,
+            self.sample_rate,
+            emotion,
+            pitch_override=pitch_override,
+            rate_override=rate_override,
+            energy_override=energy_override,
+        )
         elapsed = perf_counter() - start
         path = save_audio(output_path or default_output_path(input_path, f"emotion_{emotion}"), converted, self.sample_rate)
         metrics = self._build_metrics(source, converted, elapsed)
         metrics["emotion_profile"] = float(sorted(["angry", "calm", "excited", "sad", "whisper"]).index(emotion))
+        if pitch_override is not None:
+            metrics["pitch_override"] = float(pitch_override)
+        if rate_override is not None:
+            metrics["rate_override"] = float(rate_override)
+        if energy_override is not None:
+            metrics["energy_override"] = float(energy_override)
         return PipelineResult(output_path=path, metrics=metrics)
 
     def convert_gender_age_file(self, input_path: str, mode: str, output_path: str | None = None) -> PipelineResult:
@@ -87,7 +108,14 @@ class VoiceConversionPipeline:
     def process_live_chunk(self, chunk: np.ndarray, task: str, options: dict[str, object]) -> np.ndarray:
         if task == "emotion":
             emotion = str(options.get("emotion", "calm"))
-            return convert_emotion(chunk, self.sample_rate, emotion)
+            return convert_emotion(
+                chunk,
+                self.sample_rate,
+                emotion,
+                pitch_override=self._optional_float(options, "pitch_override"),
+                rate_override=self._optional_float(options, "rate_override"),
+                energy_override=self._optional_float(options, "energy_override"),
+            )
 
         if task == "gender_age":
             mode = str(options.get("mode", "male_to_female"))
@@ -106,6 +134,13 @@ class VoiceConversionPipeline:
             )
 
         raise ValueError(f"Unsupported live task: {task}")
+
+    @staticmethod
+    def _optional_float(options: dict[str, object], key: str) -> float | None:
+        value = options.get(key)
+        if isinstance(value, (int, float)):
+            return float(value)
+        return None
 
     def _build_metrics(self, source: np.ndarray, converted: np.ndarray, elapsed_seconds: float) -> dict[str, float]:
         source_f0 = extract_pitch_contour(source, self.sample_rate)

@@ -1,0 +1,25 @@
+<svg width="256" height="256" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="tile" x1="36" y1="26" x2="220" y2="230" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#6C63FF"/>
+      <stop offset="0.54" stop-color="#2F8CFF"/>
+      <stop offset="1" stop-color="#22D3B0"/>
+    </linearGradient>
+    <linearGradient id="wave" x1="58" y1="132" x2="199" y2="132" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#E8EAFF"/>
+      <stop offset="0.53" stop-color="#B6FFF2"/>
+      <stop offset="1" stop-color="#FFFFFF"/>
+    </linearGradient>
+    <filter id="shadow" x="0" y="0" width="256" height="256" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="18" stdDeviation="18" flood-color="#03060D" flood-opacity="0.35"/>
+    </filter>
+  </defs>
+  <rect width="256" height="256" fill="transparent"/>
+  <g filter="url(#shadow)">
+    <rect x="22" y="22" width="212" height="212" rx="54" fill="url(#tile)"/>
+    <rect x="38" y="38" width="180" height="180" rx="42" fill="#101420" fill-opacity="0.34"/>
+    <path d="M58 132C67 132 70 112 80 112C91 112 93 152 104 152C115 152 116 92 128 92C140 92 141 164 153 164C164 164 165 116 176 116C187 116 190 132 199 132" stroke="url(#wave)" stroke-width="13" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M96 88C103 78 115 72 130 72C145 72 159 77 168 86" stroke="#FFFFFF" stroke-width="13" stroke-linecap="round" opacity="0.92"/>
+    <path d="M160 174C152 183 140 188 125 188C109 188 96 183 88 174" stroke="#FFFFFF" stroke-width="13" stroke-linecap="round" opacity="0.92"/>
+  </g>
+</svg>

@@ -4,13 +4,19 @@ mod types;
 
 use commands::{
     backend_health, convert_emotion, convert_gender_age, convert_singing, convert_speaker_clone, list_virtual_mic_devices,
-    pick_audio_file, pick_midi_file, pick_reference_files, process_live_chunk, start_backend,
+    pick_audio_file, pick_midi_file, pick_reference_files, process_live_chunk, save_recording_wav, start_backend,
     start_live_session, stop_backend, stop_live_session,
 };
 
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .setup(|_app| {
+            tauri::async_runtime::spawn(async {
+                let _ = backend::ensure_backend().await;
+            });
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             start_backend,
             stop_backend,
@@ -18,6 +24,7 @@ fn main() {
             pick_audio_file,
             pick_reference_files,
             pick_midi_file,
+            save_recording_wav,
             convert_emotion,
             convert_gender_age,
             convert_speaker_clone,

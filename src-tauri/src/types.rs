@@ -3,6 +3,7 @@ use std::collections::HashMap;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConversionResponse {
+    #[serde(alias = "output_path", rename = "outputPath")]
     pub output_path: String,
     #[serde(default)]
     pub metrics: HashMap<String, f64>,
