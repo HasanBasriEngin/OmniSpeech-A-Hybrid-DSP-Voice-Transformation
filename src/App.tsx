@@ -29,11 +29,11 @@ type WaveformData = {
 
 const TOTAL_DURATION = 2.8;
 
-const moduleMeta: Record<ModuleKey, { label: string; badge: string }> = {
-  emotion: { label: "Emotion", badge: "FR10-15" },
-  gender: { label: "Gender / Age", badge: "FR16-21" },
-  speaker: { label: "Speaker / Clone", badge: "FR22-28" },
-  singing: { label: "Singing Voice", badge: "FR29-33" },
+const moduleMeta: Record<ModuleKey, { label: string }> = {
+  emotion: { label: "Emotion" },
+  gender: { label: "Gender / Age" },
+  speaker: { label: "Speaker / Clone" },
+  singing: { label: "Singing Voice" },
 };
 
 const emotionDescriptions: Record<EmotionKey, string> = {
@@ -993,7 +993,6 @@ export default function App() {
           >
             <span className="nav-icon">M</span>
             {item.label}
-            <span className="nav-badge">{item.badge}</span>
           </button>
         ))}
 
