@@ -5,6 +5,8 @@ from pathlib import Path
 import numpy as np
 import soundfile as sf
 
+from backend.audio.filtering import LiveVoicePostFilter, post_filter_voice
+from backend.audio.io import normalize_audio
 from backend.pipeline.processor import VoiceConversionPipeline
 from backend.services.live_session import LiveSessionManager
 
@@ -40,6 +42,41 @@ def test_emotion_file_conversion():
 
     assert result.output_path.endswith(".wav")
     assert result.metrics["processing_seconds"] >= 0.0
+
+
+def test_post_filter_limits_spikes_and_keeps_finite_output():
+    sr = 22050
+    t = np.linspace(0, 0.2, int(sr * 0.2), endpoint=False, dtype=np.float32)
+    source = (0.2 * np.sin(2 * np.pi * 220 * t)).astype(np.float32)
+    source[source.size // 2] = 1.8
+
+    filtered = post_filter_voice(source, sr)
+
+    assert filtered.dtype == np.float32
+    assert np.all(np.isfinite(filtered))
+    assert float(np.max(np.abs(filtered))) <= 0.96
+
+
+def test_live_post_filter_limits_chunk_energy():
+    sr = 22050
+    t = np.linspace(0, 0.1, int(sr * 0.1), endpoint=False, dtype=np.float32)
+    chunk = (0.25 * np.sin(2 * np.pi * 220 * t)).astype(np.float32)
+    chunk[chunk.size // 3] = 1.6
+
+    filtered = LiveVoicePostFilter(sr).process(chunk)
+
+    assert filtered.dtype == np.float32
+    assert np.all(np.isfinite(filtered))
+    assert float(np.max(np.abs(filtered))) <= 0.96
+
+
+def test_normalize_audio_rms_mode_hits_target_level():
+    audio = np.array([0.2, -0.2, 0.2, -0.2], dtype=np.float32)
+
+    normalized = normalize_audio(audio, mode="rms", target_rms=0.1)
+    rms = float(np.sqrt(np.mean(normalized**2)))
+
+    assert np.isclose(rms, 0.1, atol=1e-4)
 
 
 def test_live_chunk_processing_without_virtual_mic():

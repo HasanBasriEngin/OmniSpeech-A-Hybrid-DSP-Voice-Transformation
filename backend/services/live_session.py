@@ -6,6 +6,7 @@ from uuid import uuid4
 
 import numpy as np
 
+from backend.audio.filtering import LiveVoicePostFilter
 from backend.pipeline.processor import VoiceConversionPipeline
 from backend.services.virtual_mic import VirtualMicRouter
 
@@ -17,6 +18,7 @@ class LiveSession:
     options: dict[str, object]
     route_to_virtual_mic: bool
     router: VirtualMicRouter | None
+    post_filter: LiveVoicePostFilter
 
 
 class LiveSessionManager:
@@ -48,6 +50,7 @@ class LiveSessionManager:
             options=options,
             route_to_virtual_mic=route_to_virtual_mic,
             router=router,
+            post_filter=LiveVoicePostFilter(self.sample_rate),
         )
         with self._lock:
             self._sessions[session_id] = session
@@ -64,6 +67,7 @@ class LiveSessionManager:
             task=session.task,
             options=session.options,
         )
+        processed = session.post_filter.process(processed)
 
         if session.route_to_virtual_mic and session.router is not None:
             session.router.write(processed)

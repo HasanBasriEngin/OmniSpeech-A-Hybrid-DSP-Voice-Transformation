@@ -28,6 +28,7 @@ type WaveformData = {
 };
 
 const TOTAL_DURATION = 2.8;
+const LIVE_SAMPLE_RATE = 22050;
 
 const moduleMeta: Record<ModuleKey, { label: string }> = {
   emotion: { label: "Emotion" },
@@ -79,18 +80,50 @@ function getAudioContextCtor() {
   return window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
 }
 
-async function buildWaveform(path: string, pointCount = 520): Promise<WaveformData> {
+function createAudioContext(sampleRate?: number) {
   const AudioContextCtor = getAudioContextCtor();
   if (!AudioContextCtor) {
     throw new Error("AudioContext is not available in this webview");
   }
 
+  if (sampleRate) {
+    try {
+      return new AudioContextCtor({ sampleRate });
+    } catch {
+      return new AudioContextCtor();
+    }
+  }
+
+  return new AudioContextCtor();
+}
+
+function resampleLinear(input: Float32Array, fromRate: number, toRate: number) {
+  if (fromRate === toRate || input.length === 0) {
+    return new Float32Array(input);
+  }
+
+  const ratio = toRate / fromRate;
+  const outputLength = Math.max(1, Math.round(input.length * ratio));
+  const output = new Float32Array(outputLength);
+
+  for (let index = 0; index < outputLength; index += 1) {
+    const sourceIndex = index / ratio;
+    const left = Math.floor(sourceIndex);
+    const right = Math.min(left + 1, input.length - 1);
+    const mix = sourceIndex - left;
+    output[index] = (input[left] ?? 0) * (1 - mix) + (input[right] ?? 0) * mix;
+  }
+
+  return output;
+}
+
+async function buildWaveform(path: string, pointCount = 520): Promise<WaveformData> {
   const response = await fetch(convertFileSrc(path));
   if (!response.ok) {
     throw new Error(`Could not read audio file (${response.status})`);
   }
 
-  const context = new AudioContextCtor();
+  const context = createAudioContext();
   try {
     const bytes = await response.arrayBuffer();
     const decoded = await context.decodeAudioData(bytes.slice(0));
@@ -543,19 +576,12 @@ export default function App() {
       return;
     }
 
-    const AudioContextCtor =
-      window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-    if (!AudioContextCtor) {
-      addLog("AudioContext is not available in this webview", true);
-      return;
-    }
-
     try {
       await stopRecording(false);
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
       });
-      const context = new AudioContextCtor();
+      const context = createAudioContext();
       const source = context.createMediaStreamSource(stream);
       const processor = context.createScriptProcessor(4096, 1, 1);
 
@@ -609,20 +635,17 @@ export default function App() {
       return;
     }
 
-    const AudioContextCtor =
-      window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-    if (!AudioContextCtor) {
-      addLog("AudioContext is not available in this webview", true);
-      return;
-    }
-
     await stopLiveCapture();
     const stream = await navigator.mediaDevices.getUserMedia({
       audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
     });
-    const context = new AudioContextCtor();
+    const context = createAudioContext(LIVE_SAMPLE_RATE);
     const source = context.createMediaStreamSource(stream);
-    const processor = context.createScriptProcessor(1024, 1, 1);
+    const processor = context.createScriptProcessor(2048, 1, 1);
+
+    if (context.sampleRate !== LIVE_SAMPLE_RATE) {
+      addLog(`Live input resampled ${Math.round(context.sampleRate)}Hz -> ${LIVE_SAMPLE_RATE}Hz`);
+    }
 
     processor.onaudioprocess = (event) => {
       event.outputBuffer.getChannelData(0).fill(0);
@@ -631,7 +654,8 @@ export default function App() {
       }
 
       liveProcessingRef.current = true;
-      const chunk = Array.from(event.inputBuffer.getChannelData(0));
+      const liveChunk = resampleLinear(event.inputBuffer.getChannelData(0), context.sampleRate, LIVE_SAMPLE_RATE);
+      const chunk = Array.from(liveChunk);
       void api
         .processLiveChunk(sessionId, chunk)
         .catch((err) => addLog(`Live audio chunk failed: ${normalizeError(err)}`, true))

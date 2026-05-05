@@ -5,6 +5,7 @@ from time import perf_counter
 
 import numpy as np
 
+from backend.audio.filtering import post_filter_voice
 from backend.audio.features import extract_pitch_contour
 from backend.audio.io import default_output_path, load_audio_mono, save_audio
 from backend.modules.emotion import convert_emotion
@@ -44,6 +45,7 @@ class VoiceConversionPipeline:
             rate_override=rate_override,
             energy_override=energy_override,
         )
+        converted = post_filter_voice(converted, self.sample_rate)
         elapsed = perf_counter() - start
         path = save_audio(output_path or default_output_path(input_path, f"emotion_{emotion}"), converted, self.sample_rate)
         metrics = self._build_metrics(source, converted, elapsed)
@@ -60,6 +62,7 @@ class VoiceConversionPipeline:
         source = load_audio_mono(input_path, self.sample_rate)
         start = perf_counter()
         converted = convert_gender_age(source, self.sample_rate, mode)
+        converted = post_filter_voice(converted, self.sample_rate)
         elapsed = perf_counter() - start
         path = save_audio(output_path or default_output_path(input_path, mode), converted, self.sample_rate)
         metrics = self._build_metrics(source, converted, elapsed)
@@ -76,6 +79,7 @@ class VoiceConversionPipeline:
 
         start = perf_counter()
         converted = clone_speaker(source, self.sample_rate, references)
+        converted = post_filter_voice(converted, self.sample_rate)
         elapsed = perf_counter() - start
 
         path = save_audio(output_path or default_output_path(input_path, "speaker_clone"), converted, self.sample_rate)
@@ -99,6 +103,7 @@ class VoiceConversionPipeline:
             midi_path=midi_path,
             pitch_contour=pitch_contour,
         )
+        converted = post_filter_voice(converted, self.sample_rate)
         elapsed = perf_counter() - start
 
         path = save_audio(output_path or default_output_path(input_path, "singing"), converted, self.sample_rate)

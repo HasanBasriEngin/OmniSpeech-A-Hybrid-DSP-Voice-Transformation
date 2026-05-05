@@ -34,7 +34,13 @@ def validate_audio_path(path: str) -> Path:
     return target
 
 
-def load_audio_mono(path: str, sample_rate: int) -> np.ndarray:
+def load_audio_mono(
+    path: str,
+    sample_rate: int,
+    *,
+    normalize_mode: str = "peak",
+    target_rms: float = 0.1,
+) -> np.ndarray:
     """
     Ses dosyasını mono float32 olarak yükle ve normalize et.
 
@@ -74,7 +80,7 @@ def load_audio_mono(path: str, sample_rate: int) -> np.ndarray:
             duration_sec,
         )
 
-    return normalize_audio(audio)
+    return normalize_audio(audio, mode=normalize_mode, target_rms=target_rms)
 
 
 def normalize_audio(
@@ -112,6 +118,9 @@ def normalize_audio(
     >>> normalized_rms = normalize_audio(audio, mode="rms", target_rms=0.08)
     """
     arr = np.asarray(audio, dtype=np.float32)
+
+    if mode not in {"peak", "rms"}:
+        raise ValueError(f"Unsupported normalization mode: {mode}")
 
     if mode == "rms":
         rms = float(np.sqrt(np.mean(arr ** 2))) if arr.size else 0.0
