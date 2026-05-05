@@ -9,6 +9,7 @@ from backend.audio.features import extract_pitch_contour
 from backend.audio.io import default_output_path, load_audio_mono, save_audio
 from backend.modules.emotion import convert_emotion
 from backend.modules.gender_age import convert_gender_age
+from backend.modules.celebrity_voice import convert_celebrity
 from backend.modules.singing import convert_to_singing
 from backend.modules.speaker_clone import clone_speaker
 
@@ -105,6 +106,18 @@ class VoiceConversionPipeline:
         metrics = self._build_metrics(source, converted, elapsed)
         return PipelineResult(output_path=path, metrics=metrics)
 
+    def convert_celebrity_file(self, input_path: str, celebrity: str, output_path: str | None = None) -> PipelineResult:
+        source = load_audio_mono(input_path, self.sample_rate)
+        start = perf_counter()
+        converted = convert_celebrity(source, self.sample_rate, celebrity)
+        elapsed = perf_counter() - start
+        path = save_audio(output_path or default_output_path(input_path, f"celebrity_{celebrity}"), converted, self.sample_rate)
+        metrics = self._build_metrics(source, converted, elapsed)
+        metrics["celebrity_profile"] = float(
+            sorted(["adele", "james_earl_jones", "michael_jackson", "morgan_freeman", "taylor_swift"]).index(celebrity)
+        )
+        return PipelineResult(output_path=path, metrics=metrics)
+
     def process_live_chunk(self, chunk: np.ndarray, task: str, options: dict[str, object]) -> np.ndarray:
         if task == "emotion":
             emotion = str(options.get("emotion", "calm"))
@@ -132,6 +145,10 @@ class VoiceConversionPipeline:
                 midi_path=options.get("midi_path") if isinstance(options.get("midi_path"), str) else None,
                 pitch_contour=options.get("pitch_contour") if isinstance(options.get("pitch_contour"), list) else None,
             )
+
+        if task == "celebrity":
+            celebrity = str(options.get("celebrity", "michael_jackson"))
+            return convert_celebrity(chunk, self.sample_rate, celebrity)
 
         raise ValueError(f"Unsupported live task: {task}")
 

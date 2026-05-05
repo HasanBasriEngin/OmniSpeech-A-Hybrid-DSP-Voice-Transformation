@@ -4,6 +4,7 @@ from fastapi import APIRouter, HTTPException
 import numpy as np
 
 from backend.api.schemas import (
+    CelebrityRequest,
     ConversionResponse,
     EmotionRequest,
     GenderAgeRequest,
@@ -74,6 +75,18 @@ def build_router(pipeline: VoiceConversionPipeline, live_manager: LiveSessionMan
                 input_path=payload.input_path,
                 midi_path=payload.midi_path,
                 pitch_contour=payload.pitch_contour,
+                output_path=payload.output_path,
+            )
+            return ConversionResponse(output_path=result.output_path, metrics=result.metrics)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @router.post("/api/convert/celebrity", response_model=ConversionResponse)
+    async def convert_celebrity(payload: CelebrityRequest) -> ConversionResponse:
+        try:
+            result = pipeline.convert_celebrity_file(
+                input_path=payload.input_path,
+                celebrity=payload.celebrity,
                 output_path=payload.output_path,
             )
             return ConversionResponse(output_path=result.output_path, metrics=result.metrics)

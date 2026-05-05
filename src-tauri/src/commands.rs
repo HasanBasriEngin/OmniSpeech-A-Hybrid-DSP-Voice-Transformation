@@ -169,6 +169,21 @@ pub async fn convert_singing(
 }
 
 #[tauri::command]
+pub async fn convert_celebrity(
+    input_path: String,
+    celebrity: String,
+    output_path: Option<String>,
+) -> Result<ConversionResponse, String> {
+    let payload = json!({
+        "input_path": input_path,
+        "celebrity": celebrity,
+        "output_path": output_path,
+    });
+    let response = backend::post("/api/convert/celebrity", payload).await?;
+    serde_json::from_value(response).map_err(|err| format!("Invalid conversion response: {err}"))
+}
+
+#[tauri::command]
 pub async fn list_virtual_mic_devices() -> Result<Vec<String>, String> {
     let response = backend::get("/api/live/virtual-mics").await?;
     let parsed: LiveDevicesResponse =

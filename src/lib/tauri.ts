@@ -32,6 +32,8 @@ export const api = {
     pitchContour: number[] | null = null,
     outputPath: string | null = null,
   ) => tauriOnly<ConversionResult>("convert_singing", { inputPath, midiPath, pitchContour, outputPath }),
+  convertCelebrity: (inputPath: string, celebrity: string, outputPath: string | null = null) =>
+    tauriOnly<ConversionResult>("convert_celebrity", { inputPath, celebrity, outputPath }),
   listVirtualMics: () => tauriOnly<string[]>("list_virtual_mic_devices"),
   startLiveSession: (
     task: ConversionTask,
