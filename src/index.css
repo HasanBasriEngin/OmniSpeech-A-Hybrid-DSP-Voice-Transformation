@@ -1,4 +1,4 @@
-@import url("https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Sora:wght@300;400;500;600&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Sora:wght@300;400;500;600;700&display=swap");
 
 * {
   box-sizing: border-box;
@@ -7,20 +7,21 @@
 }
 
 :root {
-  --bg0: #0d0f12;
-  --bg1: #141720;
-  --bg2: #1c2030;
-  --bg3: #232840;
-  --accent: #6c63ff;
-  --accent2: #a78bfa;
-  --teal: #22d3b0;
-  --amber: #f59e0b;
+  /* Yeni renk paleti: koyu lacivert + turuncu-altın + cyan */
+  --bg0: #0A0E1A;
+  --bg1: #0F1526;
+  --bg2: #161D33;
+  --bg3: #1E2740;
+  --accent: #E8A838;
+  --accent2: #ffd580;
+  --teal: #00D4AA;
+  --amber: #E8A838;
   --red: #f87171;
-  --text1: #e8eaf0;
-  --text2: #8b92a8;
-  --text3: #565e78;
-  --border: rgba(255, 255, 255, 0.06);
-  --border2: rgba(255, 255, 255, 0.12);
+  --text1: #EEF0F8;
+  --text2: #8B94B2;
+  --text3: #4E5A7A;
+  --border: rgba(255, 255, 255, 0.05);
+  --border2: rgba(255, 255, 255, 0.10);
   --font: "Sora", sans-serif;
   --mono: "JetBrains Mono", monospace;
   color-scheme: dark;
@@ -41,16 +42,18 @@ body {
   overflow: hidden;
 }
 
+/* ——— Layout ——— */
 .app,
 .mockup-app {
   display: grid;
-  grid-template-columns: 220px 1fr 280px;
-  grid-template-rows: 52px 1fr;
+  grid-template-columns: 200px 1fr 260px;
+  grid-template-rows: 48px 1fr;
   width: 100%;
   height: 100%;
   min-height: 600px;
 }
 
+/* ——— Topbar ——— */
 .topbar {
   grid-column: 1 / -1;
   background: var(--bg1);
@@ -58,7 +61,7 @@ body {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 0 20px;
+  padding: 0 18px;
 }
 
 .logo {
@@ -68,20 +71,22 @@ body {
 }
 
 .logo-icon {
-  width: 28px;
-  height: 28px;
-  border-radius: 8px;
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
   background: linear-gradient(135deg, var(--accent), var(--teal));
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 14px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #0A0E1A;
 }
 
 .logo-text {
   font-size: 13px;
   font-weight: 600;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.03em;
   color: var(--text1);
 }
 
@@ -115,19 +120,20 @@ body {
 .tag {
   font-size: 10px;
   font-family: var(--mono);
-  padding: 3px 8px;
+  padding: 2px 7px;
   border-radius: 4px;
   border: 1px solid var(--border2);
   color: var(--text3);
 }
 
+/* ——— Sidebar ——— */
 .sidebar {
   background: var(--bg1);
   border-right: 1px solid var(--border);
-  padding: 16px 12px;
+  padding: 14px 10px;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 3px;
   overflow-y: auto;
 }
 
@@ -137,15 +143,15 @@ body {
   color: var(--text3);
   letter-spacing: 0.1em;
   text-transform: uppercase;
-  padding: 12px 8px 6px;
+  padding: 10px 8px 5px;
 }
 
 .nav-item {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 8px 10px;
-  border-radius: 8px;
+  gap: 9px;
+  padding: 7px 9px;
+  border-radius: 7px;
   cursor: pointer;
   font-size: 12px;
   color: var(--text2);
@@ -159,9 +165,17 @@ body {
 }
 
 .nav-item.active {
-  background: rgba(108, 99, 255, 0.15);
+  background: rgba(232, 168, 56, 0.12);
   color: var(--accent2);
-  border-color: rgba(108, 99, 255, 0.25);
+  border-color: rgba(232, 168, 56, 0.22);
+}
+
+/* Celebrity Voice için yer ayrıldı — Emre ile koordineli */
+.nav-item.celebrity-placeholder {
+  opacity: 0.5;
+  border: 1px dashed var(--border2);
+  cursor: not-allowed;
+  font-style: italic;
 }
 
 .nav-icon {
@@ -171,15 +185,38 @@ body {
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
+  color: inherit;
 }
 
+/* SVG ikonlar için */
+.nav-icon svg {
+  width: 14px;
+  height: 14px;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* ——— Ana içerik ——— */
 .main {
   background: var(--bg0);
-  padding: 20px;
+  padding: 18px;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 14px;
+}
+
+/* Modül geçiş animasyonu */
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.main > * {
+  animation: fade-in 0.22s ease both;
 }
 
 .section-header {
@@ -191,20 +228,21 @@ body {
 
 .section-title {
   font-size: 11px;
-  font-family: var(--mono);
+  font-weight: 500;
   color: var(--text3);
-  letter-spacing: 0.08em;
+  letter-spacing: 0.05em;
 }
 
 .section-controls {
   display: flex;
-  gap: 6px;
+  gap: 5px;
 }
 
+/* ——— Küçük butonlar ——— */
 .btn-xs {
   font-size: 10px;
   font-family: var(--mono);
-  padding: 3px 10px;
+  padding: 3px 9px;
   border-radius: 5px;
   border: 1px solid var(--border2);
   color: var(--text3);
@@ -219,12 +257,12 @@ body {
 }
 
 .btn-xs:disabled {
-  opacity: 0.45;
+  opacity: 0.4;
   cursor: not-allowed;
 }
 
 .btn-xs.active {
-  background: rgba(108, 99, 255, 0.2);
+  background: rgba(232, 168, 56, 0.15);
   border-color: var(--accent);
   color: var(--accent2);
 }
@@ -235,6 +273,7 @@ body {
   text-align: left;
 }
 
+/* ——— Action & selection satırları ——— */
 .action-row {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -243,42 +282,44 @@ body {
 }
 
 .action-row.contextual {
-  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
 }
 
 .selection-strip {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 6px;
+  gap: 5px;
   margin-top: 10px;
 }
 
+/* Daha organik köşe yuvarlaklığı */
 .selection-chip {
   min-width: 0;
-  padding: 8px 10px;
-  border-radius: 8px;
+  padding: 7px 9px;
+  border-radius: 10px;
   border: 1px solid var(--border);
   background: var(--bg2);
+  transition: border-color 0.15s;
 }
 
 .selection-chip.ok {
-  border-color: rgba(34, 211, 176, 0.3);
-  background: rgba(34, 211, 176, 0.06);
+  border-color: rgba(0, 212, 170, 0.28);
+  background: rgba(0, 212, 170, 0.05);
 }
 
 .selection-chip.warn {
-  border-color: rgba(245, 158, 11, 0.35);
-  background: rgba(245, 158, 11, 0.08);
+  border-color: rgba(232, 168, 56, 0.32);
+  background: rgba(232, 168, 56, 0.07);
 }
 
 .selection-chip.active {
-  border-color: rgba(108, 99, 255, 0.3);
-  background: rgba(108, 99, 255, 0.08);
+  border-color: rgba(232, 168, 56, 0.28);
+  background: rgba(232, 168, 56, 0.07);
 }
 
 .selection-label {
   display: block;
-  margin-bottom: 4px;
+  margin-bottom: 3px;
   font-size: 9px;
   font-family: var(--mono);
   color: var(--text3);
@@ -295,17 +336,19 @@ body {
   color: var(--text1);
 }
 
+/* ——— Kartlar (glassmorphism azaltıldı, düzleştirildi) ——— */
 .card {
   background: var(--bg1);
   border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 14px 16px;
+  border-radius: 10px;
+  padding: 13px 15px;
 }
 
+/* ——— Drop zone ——— */
 .drop-zone {
   border: 1.5px dashed var(--border2);
-  border-radius: 10px;
-  padding: 20px;
+  border-radius: 9px;
+  padding: 18px;
   text-align: center;
   cursor: pointer;
   transition: all 0.2s;
@@ -313,9 +356,14 @@ body {
   overflow: hidden;
 }
 
+@keyframes waveform-hover {
+  from { background-position: 0% 50%; }
+  to   { background-position: 100% 50%; }
+}
+
 .drop-zone:hover {
   border-color: var(--accent);
-  background: rgba(108, 99, 255, 0.05);
+  background: rgba(232, 168, 56, 0.04);
 }
 
 .drop-zone.static {
@@ -328,8 +376,8 @@ body {
 }
 
 .drop-zone.loaded {
-  border-color: rgba(34, 211, 176, 0.4);
-  background: rgba(34, 211, 176, 0.04);
+  border-color: rgba(0, 212, 170, 0.35);
+  background: rgba(0, 212, 170, 0.04);
 }
 
 .drop-zone-title {
@@ -348,43 +396,50 @@ body {
 .fmt-tags {
   display: flex;
   justify-content: center;
-  gap: 6px;
-  margin-top: 10px;
+  gap: 5px;
+  margin-top: 9px;
 }
 
 .fmt-tag {
   font-size: 10px;
   font-family: var(--mono);
-  padding: 2px 8px;
+  padding: 2px 7px;
   border-radius: 4px;
   background: var(--bg2);
   border: 1px solid var(--border2);
   color: var(--text3);
 }
 
+/* ——— Kayıt paneli ——— */
 .recorder-panel {
   display: inline-grid;
   grid-template-columns: auto auto auto minmax(0, 1fr);
   align-items: center;
   gap: 8px;
   max-width: min(460px, 100%);
-  margin-top: 14px;
-  padding: 8px 10px;
+  margin-top: 12px;
+  padding: 7px 10px;
   border-radius: 8px;
   border: 1px solid var(--border2);
-  background: rgba(28, 32, 48, 0.86);
+  background: rgba(22, 29, 51, 0.9);
 }
 
 .recording-dot {
-  width: 8px;
-  height: 8px;
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
   background: var(--text3);
 }
 
 .recording-dot.active {
   background: var(--red);
-  box-shadow: 0 0 12px rgba(248, 113, 113, 0.7);
+  box-shadow: 0 0 10px rgba(248, 113, 113, 0.65);
+  animation: pulse-dot 1.2s ease-in-out infinite;
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.4; }
 }
 
 .recording-time {
@@ -405,18 +460,24 @@ body {
   color: var(--teal);
 }
 
+/* ——— Dalga formu alanı ——— */
 .waveform-area {
   position: relative;
   height: 88px;
   background: var(--bg2);
-  border-radius: 8px;
+  border-radius: 7px;
   overflow: hidden;
   margin-top: 10px;
+  transition: box-shadow 0.2s;
+}
+
+.waveform-area:hover {
+  box-shadow: inset 0 0 0 1px rgba(232, 168, 56, 0.18);
 }
 
 .waveform-area.processed {
-  margin-top: 6px;
-  opacity: 0.7;
+  margin-top: 5px;
+  opacity: 0.72;
 }
 
 .waveform-label {
@@ -426,6 +487,7 @@ body {
   font-size: 9px;
   font-family: var(--mono);
   color: var(--text3);
+  z-index: 1;
 }
 
 .waveform-label.right {
@@ -443,6 +505,7 @@ canvas.waveform {
   display: block;
 }
 
+/* ——— Playback çubuğu ——— */
 .playback-bar {
   display: flex;
   align-items: center;
@@ -451,8 +514,8 @@ canvas.waveform {
 }
 
 .play-btn {
-  width: 32px;
-  height: 32px;
+  width: 30px;
+  height: 30px;
   border-radius: 50%;
   border: 1px solid var(--border2);
   background: var(--bg2);
@@ -463,16 +526,18 @@ canvas.waveform {
   transition: all 0.15s;
   flex-shrink: 0;
   color: var(--text1);
+  font-size: 11px;
 }
 
 .play-btn:hover {
-  background: rgba(108, 99, 255, 0.2);
+  background: rgba(232, 168, 56, 0.15);
   border-color: var(--accent);
+  color: var(--accent2);
 }
 
 .play-btn:disabled {
   cursor: not-allowed;
-  opacity: 0.45;
+  opacity: 0.4;
 }
 
 .progress-wrap {
@@ -503,7 +568,7 @@ canvas.waveform {
   border-radius: 50%;
   background: var(--text1);
   transform: translateX(-50%);
-  box-shadow: 0 0 0 2px rgba(108, 99, 255, 0.4);
+  box-shadow: 0 0 0 2px rgba(232, 168, 56, 0.4);
 }
 
 .time-text {
@@ -513,15 +578,17 @@ canvas.waveform {
   white-space: nowrap;
 }
 
+/* ——— Pitch alanı ——— */
 .pitch-area {
   height: 70px;
   background: var(--bg2);
-  border-radius: 8px;
+  border-radius: 7px;
   overflow: hidden;
   position: relative;
   margin-top: 10px;
 }
 
+/* ——— Step rozetleri ——— */
 .step-row {
   display: flex;
   align-items: center;
@@ -543,15 +610,15 @@ canvas.waveform {
 }
 
 .step-badge.done {
-  background: rgba(34, 211, 176, 0.2);
+  background: rgba(0, 212, 170, 0.18);
   color: var(--teal);
-  border: 1px solid rgba(34, 211, 176, 0.3);
+  border: 1px solid rgba(0, 212, 170, 0.3);
 }
 
 .step-badge.active {
-  background: rgba(108, 99, 255, 0.25);
+  background: rgba(232, 168, 56, 0.2);
   color: var(--accent2);
-  border: 1px solid rgba(108, 99, 255, 0.4);
+  border: 1px solid rgba(232, 168, 56, 0.4);
 }
 
 .step-badge.idle {
@@ -570,30 +637,33 @@ canvas.waveform {
   font-weight: 500;
 }
 
+/* ——— Sağ panel ——— */
 .panel {
   background: var(--bg1);
   border-left: 1px solid var(--border);
-  padding: 16px 14px;
+  padding: 14px 12px;
   overflow-y: auto;
   overflow-x: hidden;
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 12px;
   min-width: 0;
 }
 
 .panel-title {
-  font-size: 11px;
+  font-size: 10px;
   font-family: var(--mono);
   color: var(--text3);
   letter-spacing: 0.08em;
-  margin-bottom: 10px;
+  text-transform: uppercase;
+  margin-bottom: 9px;
 }
 
+/* ——— Ayarlar ——— */
 .settings-grid {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
 }
 
 .settings-actions {
@@ -605,12 +675,12 @@ canvas.waveform {
 .status-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 8px;
+  gap: 7px;
 }
 
 .status-tile {
   min-width: 0;
-  padding: 10px;
+  padding: 9px;
   border-radius: 8px;
   background: var(--bg2);
   border: 1px solid var(--border);
@@ -619,16 +689,16 @@ canvas.waveform {
 .detail-list {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 5px;
 }
 
 .detail-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  padding: 9px 10px;
-  border-radius: 8px;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 7px;
   background: var(--bg2);
   border: 1px solid var(--border);
   color: var(--text2);
@@ -644,7 +714,7 @@ canvas.waveform {
 }
 
 .empty-state {
-  padding: 14px;
+  padding: 13px;
   border-radius: 8px;
   background: var(--bg2);
   border: 1px solid var(--border);
@@ -654,11 +724,11 @@ canvas.waveform {
 
 .select-field {
   width: 100%;
-  border-radius: 8px;
+  border-radius: 7px;
   border: 1px solid var(--border2);
   background: var(--bg2);
   color: var(--text2);
-  padding: 8px 10px;
+  padding: 7px 9px;
   font-size: 11px;
   font-family: var(--mono);
 }
@@ -672,41 +742,44 @@ canvas.waveform {
 }
 
 .check-row input {
-  width: 14px;
-  height: 14px;
+  width: 13px;
+  height: 13px;
+  accent-color: var(--accent);
 }
 
 .panel-inline {
   display: grid;
   grid-template-columns: 1fr auto;
-  gap: 6px;
+  gap: 5px;
 }
 
 .panel-live {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 7px;
 }
 
 .mini-note {
-  margin-top: 6px;
+  margin-top: 5px;
   font-size: 10px;
   color: var(--text3);
   font-family: var(--mono);
+  line-height: 1.4;
 }
 
 .mini-note.warn {
   color: var(--amber);
 }
 
+/* ——— Modül butonları (sidebar'da kullanılmıyor ama kalsın) ——— */
 .module-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 6px;
+  gap: 5px;
 }
 
 .module-btn {
-  padding: 10px 8px;
+  padding: 9px 8px;
   border-radius: 8px;
   border: 1px solid var(--border);
   background: var(--bg2);
@@ -714,9 +787,9 @@ canvas.waveform {
   text-align: center;
   transition: all 0.15s;
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   align-items: center;
-  gap: 5px;
+  gap: 7px;
 }
 
 .module-btn:hover {
@@ -725,23 +798,23 @@ canvas.waveform {
 }
 
 .module-btn.active-emotion {
-  border-color: rgba(167, 139, 250, 0.5);
-  background: rgba(167, 139, 250, 0.08);
+  border-color: rgba(232, 168, 56, 0.45);
+  background: rgba(232, 168, 56, 0.08);
 }
 
 .module-btn.active-gender {
-  border-color: rgba(34, 211, 176, 0.4);
-  background: rgba(34, 211, 176, 0.07);
+  border-color: rgba(0, 212, 170, 0.38);
+  background: rgba(0, 212, 170, 0.07);
 }
 
 .module-btn.active-speaker {
-  border-color: rgba(245, 158, 11, 0.4);
-  background: rgba(245, 158, 11, 0.07);
+  border-color: rgba(232, 168, 56, 0.38);
+  background: rgba(232, 168, 56, 0.07);
 }
 
 .module-btn.active-singing {
-  border-color: rgba(244, 114, 182, 0.4);
-  background: rgba(244, 114, 182, 0.07);
+  border-color: rgba(0, 212, 170, 0.38);
+  background: rgba(0, 212, 170, 0.07);
 }
 
 .module-btn-label {
@@ -750,8 +823,9 @@ canvas.waveform {
   color: var(--text3);
 }
 
+/* ——— Parametre satırları ——— */
 .param-row {
-  margin-bottom: 12px;
+  margin-bottom: 11px;
 }
 
 .param-header {
@@ -780,15 +854,24 @@ canvas.waveform {
   color: var(--amber);
 }
 
+/* ——— Slider'lar — duyguya göre track rengi ——— */
 input[type="range"] {
   width: 100%;
   -webkit-appearance: none;
   appearance: none;
   height: 3px;
   border-radius: 2px;
-  background: var(--bg3);
+  background: linear-gradient(90deg, var(--accent) var(--pct, 50%), var(--bg3) var(--pct, 50%));
   outline: none;
   cursor: pointer;
+}
+
+input[type="range"].teal {
+  background: linear-gradient(90deg, var(--teal) var(--pct, 50%), var(--bg3) var(--pct, 50%));
+}
+
+input[type="range"].amber {
+  background: linear-gradient(90deg, var(--amber) var(--pct, 50%), var(--bg3) var(--pct, 50%));
 }
 
 input[type="range"]::-webkit-slider-thumb {
@@ -799,20 +882,21 @@ input[type="range"]::-webkit-slider-thumb {
   border-radius: 50%;
   background: var(--accent2);
   border: 2px solid var(--bg1);
-  box-shadow: 0 0 6px rgba(167, 139, 250, 0.5);
+  box-shadow: 0 0 5px rgba(232, 168, 56, 0.5);
   cursor: pointer;
 }
 
 input[type="range"].teal::-webkit-slider-thumb {
   background: var(--teal);
-  box-shadow: 0 0 6px rgba(34, 211, 176, 0.4);
+  box-shadow: 0 0 5px rgba(0, 212, 170, 0.4);
 }
 
 input[type="range"].amber::-webkit-slider-thumb {
   background: var(--amber);
-  box-shadow: 0 0 6px rgba(245, 158, 11, 0.4);
+  box-shadow: 0 0 5px rgba(232, 168, 56, 0.4);
 }
 
+/* ——— Chip'ler — organik köşe yuvarlaklığı ——— */
 .chip-row {
   display: flex;
   flex-wrap: wrap;
@@ -827,8 +911,8 @@ input[type="range"].amber::-webkit-slider-thumb {
 .chip {
   font-size: 10px;
   font-family: var(--mono);
-  padding: 3px 9px;
-  border-radius: 20px;
+  padding: 4px 10px;
+  border-radius: 12px;
   border: 1px solid var(--border);
   color: var(--text3);
   cursor: pointer;
@@ -839,13 +923,13 @@ input[type="range"].amber::-webkit-slider-thumb {
 .chip.wide {
   width: 100%;
   text-align: left;
-  border-radius: 8px;
-  padding: 7px 9px;
+  border-radius: 9px;
+  padding: 7px 10px;
 }
 
 .chip.selected {
   border-color: var(--accent);
-  background: rgba(108, 99, 255, 0.14);
+  background: rgba(232, 168, 56, 0.12);
   color: var(--accent2);
 }
 
@@ -856,101 +940,118 @@ input[type="range"].amber::-webkit-slider-thumb {
 
 .chip.sel-sad {
   border-color: #60a5fa;
-  background: rgba(96, 165, 250, 0.1);
+  background: rgba(96, 165, 250, 0.08);
   color: #60a5fa;
 }
 
 .chip.sel-angry {
   border-color: var(--red);
-  background: rgba(248, 113, 113, 0.1);
+  background: rgba(248, 113, 113, 0.08);
   color: var(--red);
 }
 
 .chip.sel-excited {
   border-color: var(--amber);
-  background: rgba(245, 158, 11, 0.1);
+  background: rgba(232, 168, 56, 0.08);
   color: var(--amber);
 }
 
 .chip.sel-whisper {
   border-color: var(--teal);
-  background: rgba(34, 211, 176, 0.1);
+  background: rgba(0, 212, 170, 0.08);
   color: var(--teal);
 }
 
 .chip.sel-calm {
   border-color: var(--accent2);
-  background: rgba(167, 139, 250, 0.1);
+  background: rgba(255, 213, 128, 0.08);
   color: var(--accent2);
 }
 
+/* ——— Metrik kartlar (daha az "dashboard") ——— */
 .metric-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 6px;
+  gap: 5px;
 }
 
 .metric-card {
   background: var(--bg2);
+  border: 1px solid var(--border);
   border-radius: 8px;
-  padding: 10px 12px;
+  padding: 9px 11px;
 }
 
 .metric-label {
   font-size: 9px;
   font-family: var(--mono);
   color: var(--text3);
-  margin-bottom: 4px;
-  letter-spacing: 0.06em;
+  margin-bottom: 3px;
+  letter-spacing: 0.05em;
 }
 
 .metric-val {
-  font-size: 18px;
+  font-size: 16px;
   font-weight: 600;
-  color: var(--text1);
+  color: var(--text2);
   line-height: 1;
+}
+
+.metric-val span {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text3);
 }
 
 .metric-card.ok .metric-val {
   color: var(--teal);
 }
 
+/* ——— Convert butonu + pulse efekti ——— */
+@keyframes convert-pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(232, 168, 56, 0.4); }
+  70%  { box-shadow: 0 0 0 8px rgba(232, 168, 56, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(232, 168, 56, 0); }
+}
+
 .convert-btn {
   width: 100%;
-  padding: 11px;
-  border-radius: 10px;
+  padding: 10px;
+  border-radius: 9px;
   border: none;
-  background: linear-gradient(135deg, var(--accent), #8b5cf6);
-  color: #fff;
+  background: linear-gradient(135deg, var(--accent), #c47d10);
+  color: #0A0E1A;
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 700;
   font-family: var(--font);
   cursor: pointer;
   letter-spacing: 0.02em;
   transition: all 0.2s;
-  box-shadow: 0 4px 16px rgba(108, 99, 255, 0.35);
-  position: relative;
-  overflow: hidden;
+  box-shadow: 0 3px 14px rgba(232, 168, 56, 0.3);
+  animation: convert-pulse 2.4s ease-in-out infinite;
 }
 
 .convert-btn:hover {
   transform: translateY(-1px);
-  box-shadow: 0 6px 20px rgba(108, 99, 255, 0.45);
+  box-shadow: 0 5px 18px rgba(232, 168, 56, 0.42);
 }
 
 .convert-btn:disabled {
-  opacity: 0.6;
+  opacity: 0.55;
   cursor: not-allowed;
   transform: none;
   box-shadow: none;
+  animation: none;
 }
 
 .convert-btn:active {
   transform: scale(0.98);
+  animation: none;
 }
 
+/* ——— Log paneli (daha kompakt) ——— */
 .log-list {
-  max-height: 180px;
+  max-height: 150px;
   overflow-y: auto;
   overflow-x: hidden;
   padding-right: 2px;
@@ -959,9 +1060,9 @@ input[type="range"].amber::-webkit-slider-thumb {
 .log-entry {
   display: flex;
   align-items: flex-start;
-  gap: 6px;
+  gap: 5px;
   min-width: 0;
-  padding: 5px 0;
+  padding: 4px 0;
   border-bottom: 1px solid var(--border);
 }
 
@@ -980,7 +1081,7 @@ input[type="range"].amber::-webkit-slider-thumb {
 .log-text {
   min-width: 0;
   font-size: 10px;
-  line-height: 1.35;
+  line-height: 1.3;
   color: var(--text2);
   flex: 1;
   overflow-wrap: anywhere;
@@ -988,21 +1089,23 @@ input[type="range"].amber::-webkit-slider-thumb {
 }
 
 .log-dot {
-  width: 6px;
-  height: 6px;
+  width: 5px;
+  height: 5px;
   border-radius: 50%;
   background: var(--teal);
   flex-shrink: 0;
+  margin-top: 3px;
 }
 
 .log-dot.pending {
   background: var(--amber);
 }
 
+/* ——— Responsive ——— */
 @media (max-width: 1200px) {
   .app,
   .mockup-app {
-    grid-template-columns: 200px 1fr 260px;
+    grid-template-columns: 190px 1fr 250px;
   }
 }
 
@@ -1014,7 +1117,7 @@ input[type="range"].amber::-webkit-slider-thumb {
   .app,
   .mockup-app {
     grid-template-columns: 1fr;
-    grid-template-rows: 52px auto auto;
+    grid-template-rows: 48px auto auto;
     height: auto;
     min-height: 100vh;
   }
