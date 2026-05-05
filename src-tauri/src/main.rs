@@ -1,6 +1,10 @@
+#![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
+
 mod backend;
 mod commands;
 mod types;
+
+use tauri::Manager;
 
 use commands::{
     backend_health, convert_emotion, convert_gender_age, convert_singing, convert_speaker_clone, list_virtual_mic_devices,
@@ -11,7 +15,10 @@ use commands::{
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .setup(|_app| {
+        .setup(|app| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+            }
             tauri::async_runtime::spawn(async {
                 let _ = backend::ensure_backend().await;
             });
@@ -34,9 +41,6 @@ fn main() {
             process_live_chunk,
             stop_live_session,
         ])
-        .on_page_load(|window, _payload| {
-            let _ = window.show();
-        })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 
