@@ -19,6 +19,8 @@ from scipy import signal
 import torch
 import torch.nn as nn
 
+from backend.audio.filtering import apply_post_filter
+
 
 # ---------------------------------------------------------------------------
 # Dönüşüm ön ayarları (yeniden kalibre edilmiş)
@@ -341,4 +343,7 @@ def convert_gender_age(audio: np.ndarray, sample_rate: int, mode: str) -> np.nda
     # 7. Yumuşak kompresyon
     compressed = _soft_compress(textured)
 
-    return np.clip(_peak_normalize(compressed), -1.0, 1.0).astype(np.float32)
+    # 8. Ortak post-filter pipeline (declick, speech_band, deess, soft limit)
+    filtered = apply_post_filter(compressed, sample_rate)
+
+    return np.clip(_peak_normalize(filtered), -1.0, 1.0).astype(np.float32)
