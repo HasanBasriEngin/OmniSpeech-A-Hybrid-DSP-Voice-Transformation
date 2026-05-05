@@ -5,7 +5,25 @@ cd /d "%~dp0"
 
 if not defined OMNISPEECH_AUTO_INSTALL set "OMNISPEECH_AUTO_INSTALL=1"
 if not defined OMNISPEECH_AUTO_INSTALL_MSVC set "OMNISPEECH_AUTO_INSTALL_MSVC=1"
+if not defined OMNISPEECH_LAUNCH_MODE set "OMNISPEECH_LAUNCH_MODE=desktop"
 call :refresh_path
+
+if /i "!OMNISPEECH_LAUNCH_MODE!"=="desktop" (
+  if /i not "!OMNISPEECH_FORCE_INSTALL:~0,1!"=="1" if /i not "!OMNISPEECH_FORCE_REBUILD:~0,1!"=="1" (
+    if exist ".venv\Scripts\python.exe" if exist "dist\index.html" if exist "src-tauri\target\debug\omnispeech_desktop.exe" (
+      set "OMNISPEECH_PYTHON=%CD%\.venv\Scripts\python.exe"
+      call :free_port 8765
+      if errorlevel 1 (
+        pause
+        exit /b 1
+      )
+      echo [INFO] Fast launching OmniSpeech desktop...
+      start "" /d "%CD%" "src-tauri\target\debug\omnispeech_desktop.exe"
+      endlocal
+      exit /b 0
+    )
+  )
+)
 
 :detect_python
 set "PY_CMD="
@@ -84,8 +102,7 @@ if not exist ".venv\.deps_ready" set "NEED_PY_INSTALL=1"
 if /i "!OMNISPEECH_FORCE_INSTALL:~0,1!"=="1" set "NEED_PY_INSTALL=1"
 
 if "!NEED_PY_INSTALL!"=="0" (
-  python -m pip check >nul 2>&1
-  if errorlevel 1 set "NEED_PY_INSTALL=1"
+  if not exist ".venv\.deps_ready" set "NEED_PY_INSTALL=1"
 )
 
 if "!NEED_PY_INSTALL!"=="1" (
@@ -161,6 +178,10 @@ if /i "!OMNISPEECH_SETUP_ONLY:~0,1!"=="1" (
   exit /b 0
 )
 
+if exist ".venv\Scripts\python.exe" (
+  set "OMNISPEECH_PYTHON=%CD%\.venv\Scripts\python.exe"
+)
+
 :detect_cargo
 where cargo >nul 2>&1
 if errorlevel 1 (
@@ -230,14 +251,57 @@ if errorlevel 1 (
   exit /b 1
 )
 
-call :free_port 1420
-if errorlevel 1 (
-  pause
-  exit /b 1
-)
+if /i "!OMNISPEECH_LAUNCH_MODE!"=="desktop" (
+  call :free_port 8765
+  if errorlevel 1 (
+    pause
+    exit /b 1
+  )
 
-echo [INFO] Launching OmniSpeech - Tauri dev...
-cmd /c npm run tauri dev
+  call :needs_frontend_build
+  if "!NEED_FRONTEND_BUILD!"=="1" (
+    echo [INFO] Building frontend assets...
+    cmd /c npm run build
+    if errorlevel 1 (
+      echo [ERROR] npm run build failed.
+      pause
+      exit /b 1
+    )
+  ) else (
+    echo [INFO] Frontend assets are up to date.
+  )
+
+  call :needs_desktop_build
+  if "!NEED_DESKTOP_BUILD!"=="1" (
+    echo [INFO] Building desktop executable...
+    cmd /c npm run tauri build -- --debug
+    if errorlevel 1 (
+      echo [ERROR] desktop build failed.
+      pause
+      exit /b 1
+    )
+  ) else (
+    echo [INFO] Desktop executable is up to date.
+  )
+
+  if not exist "src-tauri\target\debug\omnispeech_desktop.exe" (
+    echo [ERROR] Desktop executable not found after build.
+    pause
+    exit /b 1
+  )
+
+  echo [INFO] Launching OmniSpeech desktop...
+  start "" /d "%CD%" "src-tauri\target\debug\omnispeech_desktop.exe"
+) else (
+  call :free_port 1420
+  if errorlevel 1 (
+    pause
+    exit /b 1
+  )
+
+  echo [INFO] Launching OmniSpeech - Tauri dev...
+  cmd /c npm run tauri dev
+)
 
 if errorlevel 1 (
   echo [ERROR] Launch failed.
@@ -246,6 +310,26 @@ if errorlevel 1 (
 )
 
 endlocal
+exit /b 0
+
+:needs_frontend_build
+set "NEED_FRONTEND_BUILD=0"
+if not exist "dist\index.html" (
+  set "NEED_FRONTEND_BUILD=1"
+  exit /b 0
+)
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$dist=(Get-Item 'dist\index.html').LastWriteTimeUtc; $items=@('src','index.html','package.json','package-lock.json','vite.config.ts','vite.config.js','tsconfig.json','tailwind.config.ts','tailwind.config.js') | Where-Object { Test-Path $_ }; $latest=(Get-ChildItem $items -Recurse -File | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1).LastWriteTimeUtc; if ($latest -gt $dist) { exit 10 }"
+if errorlevel 10 set "NEED_FRONTEND_BUILD=1"
+exit /b 0
+
+:needs_desktop_build
+set "NEED_DESKTOP_BUILD=0"
+if not exist "src-tauri\target\debug\omnispeech_desktop.exe" (
+  set "NEED_DESKTOP_BUILD=1"
+  exit /b 0
+)
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$exe=(Get-Item 'src-tauri\target\debug\omnispeech_desktop.exe').LastWriteTimeUtc; $items=@('src-tauri\src','src-tauri\Cargo.toml','src-tauri\Cargo.lock','src-tauri\tauri.conf.json','src-tauri\build.rs') | Where-Object { Test-Path $_ }; $latest=(Get-ChildItem $items -Recurse -File | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1).LastWriteTimeUtc; if ($latest -gt $exe) { exit 10 }"
+if errorlevel 10 set "NEED_DESKTOP_BUILD=1"
 exit /b 0
 
 :refresh_path
