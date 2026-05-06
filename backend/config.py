@@ -11,6 +11,8 @@ class BackendSettings(BaseModel):
     port: int = Field(default=8765)
     model_sample_rate: int = Field(default=22050)
     live_sample_rate: int = Field(default=22050)
+    rvc_models_dir: str = Field(default_factory=lambda: os.getenv("OMNISPEECH_RVC_MODELS_DIR", "models/rvc"))
+    rvc_device: str = Field(default_factory=lambda: os.getenv("OMNISPEECH_RVC_DEVICE", "cpu"))
 
 
 def _read_int(name: str, default: int) -> int:
@@ -30,6 +32,8 @@ def load_settings() -> BackendSettings:
         port=_read_int("OMNISPEECH_PORT", 8765),
         model_sample_rate=_read_int("OMNISPEECH_MODEL_SAMPLE_RATE", 22050),
         live_sample_rate=_read_int("OMNISPEECH_LIVE_SAMPLE_RATE", 22050),
+        rvc_models_dir=os.getenv("OMNISPEECH_RVC_MODELS_DIR", "models/rvc"),
+        rvc_device=os.getenv("OMNISPEECH_RVC_DEVICE", "cpu"),
     )
 
 

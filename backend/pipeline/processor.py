@@ -8,9 +8,11 @@ import numpy as np
 from backend.audio.filtering import post_filter_voice
 from backend.audio.features import extract_pitch_contour
 from backend.audio.io import default_output_path, load_audio_mono, save_audio
+from backend.config import SETTINGS
 from backend.modules.emotion import convert_emotion
 from backend.modules.gender_age import convert_gender_age
 from backend.modules.celebrity_voice import convert_celebrity
+from backend.modules.rvc_adapter import convert_gender_age_with_rvc
 from backend.modules.singing import convert_to_singing
 from backend.modules.speaker_clone import clone_speaker
 
@@ -24,8 +26,16 @@ class PipelineResult:
 class VoiceConversionPipeline:
     """Coordinates file-based conversion tasks across modular DSP/ML services."""
 
-    def __init__(self, sample_rate: int) -> None:
+    def __init__(
+        self,
+        sample_rate: int,
+        *,
+        rvc_models_dir: str | None = None,
+        rvc_device: str | None = None,
+    ) -> None:
         self.sample_rate = sample_rate
+        self.rvc_models_dir = rvc_models_dir or SETTINGS.rvc_models_dir
+        self.rvc_device = rvc_device or SETTINGS.rvc_device
 
     def convert_emotion_file(
         self,
@@ -62,11 +72,24 @@ class VoiceConversionPipeline:
     def convert_gender_age_file(self, input_path: str, mode: str, output_path: str | None = None) -> PipelineResult:
         source = load_audio_mono(input_path, self.sample_rate)
         start = perf_counter()
-        converted = convert_gender_age(source, self.sample_rate, mode)
+        rvc_result = convert_gender_age_with_rvc(
+            input_path,
+            mode,
+            self.sample_rate,
+            models_dir=self.rvc_models_dir,
+            device=self.rvc_device,
+        )
+        if rvc_result is None:
+            converted = convert_gender_age(source, self.sample_rate, mode)
+            rvc_engine = 0.0
+        else:
+            converted = rvc_result.audio
+            rvc_engine = 1.0
         converted = post_filter_voice(converted, self.sample_rate)
         elapsed = perf_counter() - start
         path = save_audio(output_path or default_output_path(input_path, mode), converted, self.sample_rate)
         metrics = self._build_metrics(source, converted, elapsed)
+        metrics["rvc_engine"] = rvc_engine
         return PipelineResult(output_path=path, metrics=metrics)
 
     def convert_speaker_clone_file(

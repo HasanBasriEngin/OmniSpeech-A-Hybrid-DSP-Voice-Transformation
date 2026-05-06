@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import logging
+
 import numpy as np
 
 from backend.audio.features import pitch_shift_audio, stretch_to_length, time_stretch_audio
+
+logger = logging.getLogger(__name__)
 
 
 EMOTION_PROFILES: dict[str, dict[str, float]] = {
@@ -300,6 +304,37 @@ def _match_target_rms(audio: np.ndarray, target_rms: float) -> np.ndarray:
     return np.asarray(scaled, dtype=np.float32)
 
 
+def _pitch_shift_with_parselmouth(audio: np.ndarray, sample_rate: int, n_steps: float) -> np.ndarray | None:
+    source = np.asarray(audio, dtype=np.float32)
+    if source.size == 0:
+        return source
+    if abs(n_steps) < 1e-5:
+        return source.copy()
+
+    try:
+        import parselmouth
+        from parselmouth.praat import call
+    except Exception:
+        return None
+
+    try:
+        factor = float(2.0 ** (n_steps / 12.0))
+        sound = parselmouth.Sound(source.astype(np.float64), sampling_frequency=sample_rate)
+        manipulation = call(sound, "To Manipulation", 0.01, 75.0, 600.0)
+        pitch_tier = call(manipulation, "Extract pitch tier")
+        call(pitch_tier, "Multiply frequencies", sound.xmin, sound.xmax, factor)
+        call([pitch_tier, manipulation], "Replace pitch tier")
+        shifted = call(manipulation, "Get resynthesis (overlap-add)")
+        values = np.asarray(shifted.values, dtype=np.float32)
+    except Exception as exc:  # pragma: no cover - depends on optional Praat bindings
+        logger.warning("Parselmouth pitch shift failed; falling back to Librosa: %s", exc)
+        return None
+
+    if values.ndim > 1:
+        values = values[0]
+    return stretch_to_length(np.asarray(values, dtype=np.float32), source.size)
+
+
 def convert_emotion(
     audio: np.ndarray,
     sample_rate: int,
@@ -321,7 +356,9 @@ def convert_emotion(
     rate = float(profile["rate"] if rate_override is None else np.clip(rate_override, 0.6, 1.5))
     energy = float(1.0 if energy_override is None else np.clip(energy_override, 0.2, 2.0))
 
-    pitched = _psola_pitch_shift(source, sample_rate, pitch_shift)
+    pitched = _pitch_shift_with_parselmouth(source, sample_rate, pitch_shift)
+    if pitched is None:
+        pitched = _psola_pitch_shift(source, sample_rate, pitch_shift)
     pitched = _apply_pitch_jitter(pitched, sample_rate, profile["jitter"], emotion)
     pitched = _apply_vibrato(pitched, sample_rate, profile["vibrato_rate"], profile["vibrato_depth"])
 

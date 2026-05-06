@@ -51,6 +51,34 @@ def _fade_edges(audio: np.ndarray, sample_rate: int, milliseconds: float = 4.0) 
     return x
 
 
+def _apply_pedalboard_post_filter(audio: np.ndarray, sample_rate: int) -> np.ndarray | None:
+    """Run the optional Pedalboard chain for offline processing."""
+    x = _as_mono_float(audio)
+    if x.size < 4 or sample_rate <= 0:
+        return x
+
+    try:
+        from pedalboard import Compressor, HighpassFilter, Limiter, NoiseGate, Pedalboard
+    except Exception:
+        return None
+
+    try:
+        board = Pedalboard(
+            [
+                NoiseGate(threshold_db=-34.0, ratio=1.8),
+                HighpassFilter(cutoff_frequency_hz=55.0),
+                Compressor(threshold_db=-20.0, ratio=3.5, attack_ms=4.0, release_ms=120.0),
+                Limiter(threshold_db=-0.8, release_ms=60.0),
+            ]
+        )
+        processed = board(x, sample_rate)
+    except Exception as exc:  # pragma: no cover - depends on optional binary wheels
+        logger.warning("Pedalboard post-filter failed; falling back to SciPy chain: %s", exc)
+        return None
+
+    return _as_mono_float(processed)
+
+
 def _build_speech_band_sos(sample_rate: int) -> np.ndarray | None:
     """Build a reusable speech-band bandpass filter."""
     if sample_rate <= 0:
@@ -205,9 +233,15 @@ def apply_post_filter(
     deess: bool = True,
     knee_db: float = _DEFAULT_KNEE_DB,
     ceiling: float = _SOFT_LIMIT_CEIL,
+    use_pedalboard: bool = True,
 ) -> np.ndarray:
     """Apply the shared offline post-processing chain."""
     x = _as_mono_float(audio)
+
+    if use_pedalboard:
+        pedalboard_filtered = _apply_pedalboard_post_filter(x, sample_rate)
+        if pedalboard_filtered is not None:
+            x = pedalboard_filtered
 
     if speech_band:
         x = _speech_band_filter(x, sample_rate)
@@ -233,7 +267,7 @@ def post_filter_voice(audio: np.ndarray, sample_rate: int, *, realtime: bool = F
         return x
 
     x = x - float(np.mean(x))
-    x = apply_post_filter(x, sample_rate)
+    x = apply_post_filter(x, sample_rate, use_pedalboard=not realtime)
 
     if not realtime:
         x = _fade_edges(x, sample_rate)

@@ -29,3 +29,10 @@ pytest-cache-files-*/
 .tmp/.pytest-tmp/
 .tmp/pytest-base/
 *.tsbuildinfo
+
+# Local AI voice-conversion model artifacts
+models/rvc/**/*.pth
+models/rvc/**/*.pt
+models/rvc/**/*.onnx
+models/rvc/**/*.index
+models/rvc/**/*.zip
