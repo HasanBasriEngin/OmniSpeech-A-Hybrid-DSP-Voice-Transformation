@@ -101,26 +101,27 @@ def pitch_shift_audio(audio: np.ndarray, sample_rate: int, semitones: float) -> 
     return stretch_to_length(shifted, x.size)
 
 
-def extract_pitch_contour(audio: np.ndarray, sample_rate: int) -> np.ndarray:
+def extract_pitch_contour(audio: np.ndarray, sample_rate: int, frame_length: int | None = None) -> np.ndarray:
     x = np.asarray(audio, dtype=np.float32)
     if x.size < 64 or sample_rate <= 0:
         return np.zeros(0 if x.size == 0 else 1, dtype=np.float32)
 
-    frame_length = min(max(512, sample_rate // 20), x.size)
-    hop_length = max(128, frame_length // 4)
+    frame_size = int(frame_length) if frame_length is not None else sample_rate // 20
+    frame_size = min(max(512, frame_size), x.size)
+    hop_length = max(128, frame_size // 4)
     fmin = 65.4
     fmax = 1046.5
     min_lag = max(1, int(sample_rate / fmax))
-    max_lag = min(frame_length - 1, int(sample_rate / fmin))
+    max_lag = min(frame_size - 1, int(sample_rate / fmin))
     if min_lag >= max_lag:
         return np.zeros(1, dtype=np.float32)
 
-    window = np.hanning(frame_length).astype(np.float32)
+    window = np.hanning(frame_size).astype(np.float32)
     contour: list[float] = []
-    for start in range(0, max(1, x.size - frame_length + 1), hop_length):
-        frame = x[start : start + frame_length]
-        if frame.size < frame_length:
-            frame = np.pad(frame, (0, frame_length - frame.size))
+    for start in range(0, max(1, x.size - frame_size + 1), hop_length):
+        frame = x[start : start + frame_size]
+        if frame.size < frame_size:
+            frame = np.pad(frame, (0, frame_size - frame.size))
 
         frame = frame * window
         energy = float(np.sqrt(np.mean(frame**2))) if frame.size else 0.0
@@ -128,7 +129,7 @@ def extract_pitch_contour(audio: np.ndarray, sample_rate: int) -> np.ndarray:
             contour.append(0.0)
             continue
 
-        autocorr = np.correlate(frame, frame, mode="full")[frame_length - 1 :]
+        autocorr = np.correlate(frame, frame, mode="full")[frame_size - 1 :]
         search = autocorr[min_lag : max_lag + 1]
         if search.size == 0:
             contour.append(0.0)

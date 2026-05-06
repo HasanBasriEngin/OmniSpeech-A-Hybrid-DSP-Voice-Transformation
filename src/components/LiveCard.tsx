@@ -26,7 +26,7 @@ export function LiveCard({
   onVirtualMicChange,
 }: LiveCardProps) {
   return (
-    <GlassCard title="Live Microphone" subtitle="Capture mic audio and stream transformed voice in real time.">
+    <GlassCard title="Canlı Mikrofon" subtitle="Mikrofon sesini yakala ve dönüştürülmüş sesi gerçek zamanlı aktar.">
       <div className="space-y-3">
         <button
           className="w-full rounded-xl border border-cyan-300/40 bg-cyan-500/20 px-4 py-2.5 text-sm font-semibold transition hover:bg-cyan-400/30 disabled:opacity-60"
@@ -34,7 +34,7 @@ export function LiveCard({
           onClick={onToggleLive}
           type="button"
         >
-          {isLive ? "Stop Live Session" : "Start Live Session"}
+          {isLive ? "Canlı Oturumu Durdur" : "Canlı Oturumu Başlat"}
         </button>
 
         <label className="flex items-center gap-2 text-sm text-slate-300">
@@ -44,7 +44,7 @@ export function LiveCard({
             onChange={(event) => onRouteChange(event.target.checked)}
             type="checkbox"
           />
-          Route processed audio to virtual microphone
+          İşlenmiş sesi sanal mikrofona yönlendir
         </label>
 
         <div className="grid grid-cols-[1fr_auto] gap-2">
@@ -53,7 +53,7 @@ export function LiveCard({
             onChange={(event) => onVirtualMicChange(event.target.value || null)}
             value={selectedVirtualMic ?? ""}
           >
-            <option value="">System default output</option>
+            <option value="">Sistem varsayılan çıkışı</option>
             {virtualMicDevices.map((device) => (
               <option key={device} value={device}>
                 {device}
@@ -66,13 +66,13 @@ export function LiveCard({
             onClick={onRefreshDevices}
             type="button"
           >
-            Refresh
+            Yenile
           </button>
         </div>
       </div>
 
       <div className="mt-4">
-        <div className="mb-2 text-xs uppercase tracking-wide text-slate-400">Live activity</div>
+        <div className="mb-2 text-xs uppercase tracking-wide text-slate-400">Canlı aktivite</div>
         <div className="h-3 overflow-hidden rounded-full bg-slate-800">
           <div
             className="h-full rounded-full bg-gradient-to-r from-cyan-400 via-emerald-300 to-lime-300 transition-all"

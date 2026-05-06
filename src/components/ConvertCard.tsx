@@ -31,24 +31,24 @@ export function ConvertCard({
   onConvert,
 }: ConvertCardProps) {
   return (
-    <GlassCard title="Conversion" subtitle="Choose transformation mode and run processing.">
+    <GlassCard title="Dönüşüm" subtitle="Dönüşüm modunu seç ve işlemi başlat.">
       <div className="grid gap-3 md:grid-cols-2">
         <label className="text-sm text-slate-300">
-          Task
+          Görev
           <select
             className="mt-1 w-full rounded-xl border border-slate-300/20 bg-slate-900/70 px-3 py-2 text-sm"
             onChange={(event) => onTaskChange(event.target.value as ConversionTask)}
             value={task}
           >
-            <option value="gender_age">Gender / Age</option>
-            <option value="speaker_clone">Speaker Clone</option>
-            <option value="singing">Speech to Singing</option>
+            <option value="gender_age">Cinsiyet / Yaş</option>
+            <option value="speaker_clone">Konuşmacı Klonu</option>
+            <option value="singing">Konuşmadan Şarkıya</option>
           </select>
         </label>
 
         {task === "gender_age" ? (
           <label className="text-sm text-slate-300">
-            Preset
+            Ön Ayar
             <select
               className="mt-1 w-full rounded-xl border border-slate-300/20 bg-slate-900/70 px-3 py-2 text-sm"
               onChange={(event) => onGenderModeChange(event.target.value)}
@@ -64,8 +64,8 @@ export function ConvertCard({
         ) : (
           <div className="rounded-xl border border-slate-300/10 bg-slate-800/50 px-3 py-2 text-sm text-slate-300">
             {task === "speaker_clone"
-              ? "Reference voices will be used for timbre cloning."
-              : "MIDI melody drives singing conversion."}
+              ? "Referans sesler tını klonu için kullanılacak."
+              : "Şarkı dönüşümünü MIDI melodisi yönetecek."}
           </div>
         )}
       </div>
@@ -76,13 +76,13 @@ export function ConvertCard({
         onClick={onConvert}
         type="button"
       >
-        {isBusy ? "Processing..." : "Run Conversion"}
+        {isBusy ? "İşleniyor..." : "Dönüşümü Başlat"}
       </button>
 
       <div className="mt-4 space-y-2 text-sm">
         <p>
-          <span className="text-slate-400">Output:</span>{" "}
-          <span className="text-slate-200">{outputPath ?? "No result yet"}</span>
+          <span className="text-slate-400">Çıktı:</span>{" "}
+          <span className="text-slate-200">{outputPath ?? "Henüz sonuç yok"}</span>
         </p>
 
         <div className="grid gap-2 md:grid-cols-3">
@@ -94,7 +94,7 @@ export function ConvertCard({
               </div>
             ))
           ) : (
-            <div className="text-slate-400">Metrics will appear after conversion.</div>
+            <div className="text-slate-400">Metrikler dönüşümden sonra görünecek.</div>
           )}
         </div>
       </div>

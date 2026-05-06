@@ -385,8 +385,8 @@ export default function App() {
   const [selectedVirtualMic, setSelectedVirtualMic] = useState<string | null>(null);
 
   const [logEntries, setLogEntries] = useState<LogEntry[]>([
-    { time: "14:32", text: "UI ready" },
-    { time: "14:33", text: "Pick source audio to begin", pending: true },
+    { time: "14:32", text: "Arayüz hazır" },
+    { time: "14:33", text: "Başlamak için kaynak ses seç", pending: true },
   ]);
 
   const waveformOrigRef = useRef<HTMLCanvasElement | null>(null);
@@ -453,10 +453,10 @@ export default function App() {
       await api.startBackend();
       const healthy = await api.backendHealth();
       setBackendReady(healthy);
-      addLog(healthy ? "Backend ready" : "Backend health failed", !healthy);
+      addLog(healthy ? "Backend hazır" : "Backend sağlık kontrolü başarısız", !healthy);
       return healthy;
     } catch (err) {
-      addLog(`Backend error: ${normalizeError(err)}`, true);
+      addLog(`Backend hatası: ${normalizeError(err)}`, true);
       return false;
     }
   };
@@ -466,9 +466,9 @@ export default function App() {
     try {
       await api.stopBackend();
       setBackendReady(false);
-      addLog("Backend stopped");
+      addLog("Backend durduruldu");
     } catch (err) {
-      addLog(`Backend stop failed: ${normalizeError(err)}`, true);
+      addLog(`Backend durdurulamadı: ${normalizeError(err)}`, true);
     }
   };
 
@@ -479,9 +479,9 @@ export default function App() {
       if (selectedVirtualMic && !devices.includes(selectedVirtualMic)) {
         setSelectedVirtualMic(null);
       }
-      addLog(`Virtual mics refreshed (${devices.length})`);
+      addLog(`Sanal mikrofonlar yenilendi (${devices.length})`);
     } catch (err) {
-      addLog(`Virtual mic refresh failed: ${normalizeError(err)}`, true);
+      addLog(`Sanal mikrofon yenilenemedi: ${normalizeError(err)}`, true);
     }
   };
 
@@ -493,11 +493,11 @@ export default function App() {
         setOutputPath(null);
         setSourceFile(selected);
         setInputMode("file");
-        addLog(`Input selected: ${basename(selected)}`);
+        addLog(`Kaynak seçildi: ${basename(selected)}`);
       }
       return selected;
     } catch (err) {
-      addLog(`Input picker failed: ${normalizeError(err)}`, true);
+      addLog(`Kaynak seçimi başarısız: ${normalizeError(err)}`, true);
       return null;
     }
   };
@@ -506,10 +506,10 @@ export default function App() {
     try {
       const selected = await api.pickReferenceFiles();
       setReferenceFiles(selected);
-      addLog(selected.length ? `References selected (${selected.length})` : "References cleared");
+      addLog(selected.length ? `Referans seçildi (${selected.length})` : "Referanslar temizlendi");
       return selected;
     } catch (err) {
-      addLog(`Reference picker failed: ${normalizeError(err)}`, true);
+      addLog(`Referans seçimi başarısız: ${normalizeError(err)}`, true);
       return [];
     }
   };
@@ -518,10 +518,10 @@ export default function App() {
     try {
       const selected = await api.pickMidiFile();
       setMidiFile(selected);
-      addLog(selected ? `MIDI selected: ${basename(selected)}` : "MIDI cleared");
+      addLog(selected ? `MIDI seçildi: ${basename(selected)}` : "MIDI temizlendi");
       return selected;
     } catch (err) {
-      addLog(`MIDI picker failed: ${normalizeError(err)}`, true);
+      addLog(`MIDI seçimi başarısız: ${normalizeError(err)}`, true);
       return null;
     }
   };
@@ -554,7 +554,7 @@ export default function App() {
 
     const totalSamples = chunks.reduce((total, chunk) => total + chunk.length, 0);
     if (totalSamples === 0) {
-      addLog("Recording did not capture audio", true);
+      addLog("Kayıt ses yakalayamadı", true);
       return null;
     }
 
@@ -567,10 +567,10 @@ export default function App() {
       setRecordedFile(path);
       setInputMode("mic");
       setRecordingSeconds(Number(((Date.now() - recordingStartedAtRef.current) / 1000).toFixed(1)));
-      addLog(`Mic recording saved: ${basename(path)}`);
+      addLog(`Mikrofon kaydı kaydedildi: ${basename(path)}`);
       return path;
     } catch (err) {
-      addLog(`Recording save failed: ${normalizeError(err)}`, true);
+      addLog(`Kayıt kaydedilemedi: ${normalizeError(err)}`, true);
       return null;
     }
   };
@@ -585,7 +585,7 @@ export default function App() {
     }
 
     if (!navigator.mediaDevices?.getUserMedia) {
-      addLog("Microphone recording is not available in this webview", true);
+      addLog("Bu pencerede mikrofon kaydı kullanılamıyor", true);
       return;
     }
 
@@ -621,10 +621,10 @@ export default function App() {
         setRecordingSeconds((Date.now() - recordingStartedAtRef.current) / 1000);
       }, 150);
       setIsRecording(true);
-      addLog("Mic recording started");
+      addLog("Mikrofon kaydı başladı");
     } catch (err) {
       await stopRecording(false);
-      addLog(`Mic recording failed: ${normalizeError(err)}`, true);
+      addLog(`Mikrofon kaydı başarısız: ${normalizeError(err)}`, true);
     }
   };
 
@@ -644,7 +644,7 @@ export default function App() {
 
   const startLiveCapture = async (sessionId: string) => {
     if (!navigator.mediaDevices?.getUserMedia) {
-      addLog("Microphone capture is not available in this webview", true);
+      addLog("Bu pencerede mikrofon yakalama kullanılamıyor", true);
       return;
     }
 
@@ -657,7 +657,7 @@ export default function App() {
     const processor = context.createScriptProcessor(2048, 1, 1);
 
     if (context.sampleRate !== LIVE_SAMPLE_RATE) {
-      addLog(`Live input resampled ${Math.round(context.sampleRate)}Hz -> ${LIVE_SAMPLE_RATE}Hz`);
+      addLog(`Canlı giriş yeniden örneklendi ${Math.round(context.sampleRate)}Hz -> ${LIVE_SAMPLE_RATE}Hz`);
     }
 
     processor.onaudioprocess = (event) => {
@@ -671,7 +671,7 @@ export default function App() {
       const chunk = Array.from(liveChunk);
       void api
         .processLiveChunk(sessionId, chunk)
-        .catch((err) => addLog(`Live audio chunk failed: ${normalizeError(err)}`, true))
+        .catch((err) => addLog(`Canlı ses parçası işlenemedi: ${normalizeError(err)}`, true))
         .finally(() => {
           liveProcessingRef.current = false;
         });
@@ -684,7 +684,7 @@ export default function App() {
     liveAudioContextRef.current = context;
     liveSourceRef.current = source;
     liveProcessorRef.current = processor;
-    addLog("Microphone stream connected");
+    addLog("Mikrofon akışı bağlandı");
   };
 
   const stopLive = async (log = true) => {
@@ -696,14 +696,14 @@ export default function App() {
       try {
         await api.stopLiveSession(sessionToStop);
       } catch (err) {
-        addLog(`Stop live failed: ${normalizeError(err)}`, true);
+        addLog(`Canlı oturum durdurulamadı: ${normalizeError(err)}`, true);
       }
     }
 
     setLiveSessionId(null);
     setIsLive(false);
     if (log) {
-      addLog("Live session stopped");
+      addLog("Canlı oturum durduruldu");
     }
   };
 
@@ -746,7 +746,7 @@ export default function App() {
       setLiveSessionId(sessionId);
       setIsLive(true);
       setInputMode("mic");
-      addLog(`Live session started (${activeTask})`);
+      addLog(`Canlı oturum başladı (${activeTask})`);
       await startLiveCapture(sessionId);
     } catch (err) {
       if (startedSessionId) {
@@ -760,7 +760,7 @@ export default function App() {
       setLiveSessionId(null);
       setIsLive(false);
       await stopLiveCapture();
-      addLog(`Live start failed: ${normalizeError(err)}`, true);
+      addLog(`Canlı oturum başlatılamadı: ${normalizeError(err)}`, true);
     }
   };
 
@@ -791,13 +791,13 @@ export default function App() {
   const togglePlayback = async () => {
     const playbackPath = outputPath ?? sourceFile;
     if (!playbackPath) {
-      addLog("Once bir ses dosyasi sec veya MIC ile kayit al.", true);
+      addLog("Önce bir ses dosyası seç veya mikrofonla kayıt al.", true);
       return;
     }
 
     const audio = outputAudioRef.current;
     if (!audio) {
-      addLog("Audio player is not ready", true);
+      addLog("Ses çalar hazır değil", true);
       return;
     }
 
@@ -818,9 +818,9 @@ export default function App() {
 
     try {
       await audio.play();
-      addLog(`${outputPath ? "Playing processed audio" : "Playing original audio"}: ${basename(playbackPath)}`);
+      addLog(`${outputPath ? "İşlenmiş ses çalınıyor" : "Orijinal ses çalınıyor"}: ${basename(playbackPath)}`);
     } catch (err) {
-      addLog(`Playback failed: ${normalizeError(err)}`, true);
+      addLog(`Ses çalma başarısız: ${normalizeError(err)}`, true);
     }
   };
 
@@ -834,7 +834,7 @@ export default function App() {
       inputPath = await pickSource();
     }
     if (!inputPath) {
-      addLog("Please select input audio first", true);
+      addLog("Önce kaynak ses dosyası seç", true);
       return;
     }
 
@@ -844,7 +844,7 @@ export default function App() {
     }
 
     setIsConverting(true);
-    addLog(`Conversion started for ${activeModule}`, true);
+    addLog(`Dönüşüm başladı: ${moduleMeta[activeModule].labelTr}`, true);
 
     try {
       let result: ConversionPayload;
@@ -861,7 +861,7 @@ export default function App() {
           refs = await pickReferences();
         }
         if (refs.length === 0) {
-          throw new Error("Speaker clone requires reference files");
+          throw new Error("Konuşmacı klonu için referans dosya gerekli");
         }
         result = await api.convertSpeakerClone(inputPath, refs, null);
       } else {
@@ -871,7 +871,7 @@ export default function App() {
 
       const nextOutputPath = getOutputPath(result);
       if (!nextOutputPath) {
-        throw new Error("Backend did not return an output audio path");
+        throw new Error("Backend çıktı ses yolu döndürmedi");
       }
 
       setOutputPath(nextOutputPath);
@@ -881,9 +881,9 @@ export default function App() {
         setPlaybackDuration(result.metrics.output_duration_seconds);
       }
 
-      addLog(`Output generated: ${basename(nextOutputPath)}`);
+      addLog(`Çıktı oluşturuldu: ${basename(nextOutputPath)}`);
     } catch (err) {
-      addLog(`Conversion failed: ${normalizeError(err)}`, true);
+      addLog(`Dönüşüm başarısız: ${normalizeError(err)}`, true);
     } finally {
       setIsConverting(false);
     }
@@ -918,7 +918,7 @@ export default function App() {
           setPlaybackDuration(waveform.duration);
         }
       })
-      .catch((err) => addLog(`Original waveform failed: ${normalizeError(err)}`, true));
+      .catch((err) => addLog(`Orijinal dalga formu çıkarılamadı: ${normalizeError(err)}`, true));
 
     return () => {
       cancelled = true;
@@ -942,7 +942,7 @@ export default function App() {
         setProcessedWaveform(waveform);
         setPlaybackDuration(waveform.duration);
       })
-      .catch((err) => addLog(`Processed waveform failed: ${normalizeError(err)}`, true));
+      .catch((err) => addLog(`İşlenmiş dalga formu çıkarılamadı: ${normalizeError(err)}`, true));
 
     return () => {
       cancelled = true;
@@ -972,7 +972,7 @@ export default function App() {
     };
   }, []);
 
-  const statusText = isLive ? "live" : backendReady ? "ready" : "offline";
+  const statusText = isLive ? "canlı" : backendReady ? "hazır" : "çevrimdışı";
   const statusColor = isLive || backendReady ? "#22d3b0" : "#f87171";
   const modeInfo =
     activeModule === "emotion"
@@ -1376,7 +1376,7 @@ export default function App() {
                     key={celebrity}
                     onClick={() => {
                       setSelectedCelebrity(celebrity);
-                      addLog(`Celebrity profile: ${celebrityLabels[celebrity]}`);
+                      addLog(`Ünlü profili: ${celebrityLabels[celebrity]}`);
                     }}
                     type="button"
                   >

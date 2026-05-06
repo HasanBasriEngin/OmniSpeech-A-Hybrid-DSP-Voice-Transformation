@@ -20,14 +20,14 @@ export function SourceCard({
   onPickMidi,
 }: SourceCardProps) {
   return (
-    <GlassCard title="Audio Source" subtitle="Load voice files for conversion and optional references.">
+    <GlassCard title="Ses Kaynağı" subtitle="Dönüşüm için ses dosyası ve isteğe bağlı referansları yükle.">
       <div className="space-y-3">
         <button
           className="w-full rounded-xl bg-accent px-4 py-2.5 text-sm font-semibold text-slate-950 transition hover:bg-teal-300"
           onClick={onPickSource}
           type="button"
         >
-          Select Input Audio
+          Kaynak Ses Seç
         </button>
 
         <button
@@ -35,7 +35,7 @@ export function SourceCard({
           onClick={onPickReferences}
           type="button"
         >
-          Select Speaker References
+          Konuşmacı Referansı Seç
         </button>
 
         <button
@@ -43,24 +43,24 @@ export function SourceCard({
           onClick={onPickMidi}
           type="button"
         >
-          Select MIDI (Singing)
+          MIDI Seç (Şarkı)
         </button>
       </div>
 
       <div className="mt-4 space-y-2 text-sm text-slate-200/90">
         <p>
-          <span className="text-slate-400">Input:</span>{" "}
-          {sourceFile ? basename(sourceFile) : "Not selected"}
+          <span className="text-slate-400">Kaynak:</span>{" "}
+          {sourceFile ? basename(sourceFile) : "Seçilmedi"}
         </p>
         <p>
-          <span className="text-slate-400">References:</span>{" "}
+          <span className="text-slate-400">Referanslar:</span>{" "}
           {referenceFiles.length > 0
-            ? `${referenceFiles.length} file(s)`
-            : "Not selected"}
+            ? `${referenceFiles.length} dosya`
+            : "Seçilmedi"}
         </p>
         <p>
           <span className="text-slate-400">MIDI:</span>{" "}
-          {midiFile ? basename(midiFile) : "Not selected"}
+          {midiFile ? basename(midiFile) : "Seçilmedi"}
         </p>
       </div>
     </GlassCard>
