@@ -1,0 +1,31 @@
+{
+  "gender_age": {
+    "male_to_female": {
+      "model_id": "female_local",
+      "pitch": 0,
+      "index_rate": 0.5
+    },
+    "female_to_male": {
+      "model_id": "male_local",
+      "pitch": 0,
+      "index_rate": 0.5
+    },
+    "adult_to_child": {
+      "model_id": "child_local",
+      "pitch": 0,
+      "index_rate": 0.5
+    },
+    "adult_to_elderly": {
+      "model_id": "elderly_local",
+      "pitch": 0,
+      "index_rate": 0.5
+    }
+  },
+  "celebrity": {
+    "michael_jackson": {
+      "model_id": "michael_jackson",
+      "pitch": 0,
+      "index_rate": 0.5
+    }
+  }
+}

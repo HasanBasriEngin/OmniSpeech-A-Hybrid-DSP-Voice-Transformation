@@ -1,0 +1,9 @@
+{
+  "gender_age": {
+    "male_to_female": {
+      "model_id": "female_local",
+      "pitch": 0,
+      "index_rate": 0.5
+    }
+  }
+}
