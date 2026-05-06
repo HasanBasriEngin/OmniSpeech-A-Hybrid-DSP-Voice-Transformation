@@ -7,6 +7,12 @@ use tokio::time::{sleep, Duration};
 
 const BASE_URL: &str = "http://127.0.0.1:8765";
 
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
+
+#[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
+
 #[derive(Default)]
 struct BackendProcessState {
     child: Option<Child>,
@@ -108,6 +114,9 @@ pub async fn start_backend() -> Result<String, String> {
             .stderr(Stdio::null())
             .stdin(Stdio::null());
 
+        #[cfg(target_os = "windows")]
+        cmd.creation_flags(CREATE_NO_WINDOW);
+
         let child = cmd
             .spawn()
             .map_err(|err| format!("Failed to spawn backend process: {err}"))?;
@@ -115,7 +124,7 @@ pub async fn start_backend() -> Result<String, String> {
         state.child = Some(child);
     }
 
-    wait_for_health().await?;
+    wait_for_server_boot().await?;
     Ok("Backend started".to_string())
 }
 
@@ -137,11 +146,28 @@ pub async fn ensure_backend() -> Result<(), String> {
     if health().await {
         return Ok(());
     }
+    if server_available().await {
+        wait_for_backend_ready().await?;
+        return Ok(());
+    }
+
     let _ = start_backend().await?;
+    wait_for_backend_ready().await?;
     Ok(())
 }
 
 pub async fn health() -> bool {
+    let url = format!("{BASE_URL}/health");
+    match reqwest::Client::new().get(url).send().await {
+        Ok(response) if response.status().is_success() => match response.json::<Value>().await {
+            Ok(payload) => payload.get("ready").and_then(Value::as_bool).unwrap_or(false),
+            Err(_) => false,
+        },
+        _ => false,
+    }
+}
+
+async fn server_available() -> bool {
     let url = format!("{BASE_URL}/health");
     match reqwest::Client::new().get(url).send().await {
         Ok(response) => response.status().is_success(),
@@ -149,14 +175,24 @@ pub async fn health() -> bool {
     }
 }
 
-async fn wait_for_health() -> Result<(), String> {
-    for _ in 0..40 {
+async fn wait_for_server_boot() -> Result<(), String> {
+    for delay in [50_u64, 50, 100, 100, 150, 150, 150, 150, 150, 150, 150, 150, 150, 150, 150, 150, 150, 150, 150, 150] {
+        if server_available().await {
+            return Ok(());
+        }
+        sleep(Duration::from_millis(delay)).await;
+    }
+    Err("Backend server did not start in time".to_string())
+}
+
+async fn wait_for_backend_ready() -> Result<(), String> {
+    for delay in [50_u64, 50, 75, 100, 125, 150, 175, 200, 225, 250, 275, 300, 300, 300, 300] {
         if health().await {
             return Ok(());
         }
-        sleep(Duration::from_millis(250)).await;
+        sleep(Duration::from_millis(delay)).await;
     }
-    Err("Backend did not become healthy in time".to_string())
+    Err("Backend did not become ready in time".to_string())
 }
 
 pub async fn post(path: &str, payload: Value) -> Result<Value, String> {

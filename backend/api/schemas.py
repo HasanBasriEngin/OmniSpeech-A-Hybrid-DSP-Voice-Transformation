@@ -43,8 +43,14 @@ class SingingRequest(BaseModel):
     output_path: str | None = None
 
 
+class CelebrityRequest(BaseModel):
+    input_path: str
+    celebrity: Literal["michael_jackson", "morgan_freeman", "adele", "james_earl_jones", "taylor_swift"]
+    output_path: str | None = None
+
+
 class LiveSessionStartRequest(BaseModel):
-    task: Literal["emotion", "gender_age", "speaker_clone", "singing"]
+    task: Literal["emotion", "gender_age", "speaker_clone", "singing", "celebrity"]
     options: dict[str, object] = Field(default_factory=dict)
     route_to_virtual_mic: bool = False
     virtual_mic_device: str | None = None

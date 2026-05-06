@@ -60,6 +60,16 @@ npm install
 npm run tauri dev
 ```
 
+### Opsiyonel AI kurulumu
+
+RVC tabanli offline gender/age donusumu, Pedalboard post-filter ve Parselmouth pitch shift icin:
+
+```bash
+pip install -r requirements-ai.txt
+```
+
+RVC modelleri git'e eklenmez. Lisansli veya riza alinmis yerel modelleri `models/rvc/<model_id>/<model_id>.pth` duzeninde yerlestirin ve `models/rvc/registry.json` ile mode eslestirmesi yapin. Ornek sema `models/rvc/registry.example.json` icindedir.
+
 ## Gelistirme Ortam Degiskenleri
 
 | Degisken | Aciklama |
@@ -68,6 +78,9 @@ npm run tauri dev
 | `OMNISPEECH_SETUP_ONLY=1` | Sadece kurulum yapar, uygulamayi acmaz |
 | `OMNISPEECH_AUTO_INSTALL=1` | Python/Node/Rust otomatik kurulum denemelerini acik tutar |
 | `OMNISPEECH_AUTO_INSTALL_MSVC=1` | Windows'ta MSVC Build Tools otomatik kurulum denemesini acik tutar |
+| `OMNISPEECH_RVC_MODELS_DIR=models/rvc` | Yerel RVC registry ve model kok dizini |
+| `OMNISPEECH_RVC_DEVICE=cpu` | RVC inference cihaz secimi |
+| `OMNISPEECH_RVC_TEMP_DIR=.tmp/rvc` | RVC gecici WAV calisma dizini |
 
 ## Ozellikler
 

@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-import librosa
 import numpy as np
 import torch
 import torch.nn as nn
 
-from backend.audio.features import extract_mfcc, stretch_to_length
+from backend.audio.features import extract_mfcc, pitch_shift_audio, stretch_to_length
 
 
 class SpeakerStyleAdapter(nn.Module):
@@ -48,5 +47,5 @@ def clone_speaker(audio: np.ndarray, sample_rate: int, references: list[np.ndarr
         embedding_tensor = torch.from_numpy(target)
         styled = STYLE_ADAPTER(source_tensor, embedding_tensor).cpu().numpy().astype(np.float32)
 
-    shifted = librosa.effects.pitch_shift(y=styled, sr=sample_rate, n_steps=0.75)
+    shifted = pitch_shift_audio(styled, sample_rate, 0.75)
     return stretch_to_length(np.asarray(shifted, dtype=np.float32), source.size)

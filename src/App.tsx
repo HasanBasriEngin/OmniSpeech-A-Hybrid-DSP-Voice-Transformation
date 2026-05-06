@@ -3,8 +3,9 @@ import { useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 
 import { api } from "@/lib/tauri";
 
-type ModuleKey = "emotion" | "gender" | "speaker" | "singing";
+type ModuleKey = "emotion" | "gender" | "speaker" | "singing" | "celebrity";
 type EmotionKey = "sad" | "angry" | "excited" | "whisper" | "calm";
+type CelebrityKey = "michael_jackson" | "morgan_freeman" | "adele" | "james_earl_jones" | "taylor_swift";
 type GenderMode = "male_to_female" | "female_to_male" | "adult_to_child" | "adult_to_elderly" | "child_to_adult";
 type NavigationKey = "workspace" | "evaluation" | "settings";
 type InputMode = "file" | "mic";
@@ -28,36 +29,46 @@ type WaveformData = {
 };
 
 const TOTAL_DURATION = 2.8;
+const LIVE_SAMPLE_RATE = 22050;
 
-const moduleMeta: Record<ModuleKey, { label: string }> = {
-  emotion: { label: "Emotion" },
-  gender: { label: "Gender / Age" },
-  speaker: { label: "Speaker / Clone" },
-  singing: { label: "Singing Voice" },
+const moduleMeta: Record<ModuleKey, { label: string; labelTr: string }> = {
+  emotion:   { label: "Emotion",          labelTr: "Duygu Dönüşümü" },
+  gender:    { label: "Gender / Age",     labelTr: "Cinsiyet / Yaş" },
+  speaker:   { label: "Speaker / Clone",  labelTr: "Konuşmacı Klonu" },
+  singing:   { label: "Singing Voice",    labelTr: "Şarkı Sesi" },
+  celebrity: { label: "Celebrity Voice",  labelTr: "Ünlü Sesi" },
 };
 
 const emotionDescriptions: Record<EmotionKey, string> = {
-  sad: "Lower pitch and softer phrasing",
-  angry: "Sharper attack and stronger energy",
-  excited: "Higher pitch and faster delivery",
-  whisper: "Breathier tone with reduced energy",
-  calm: "Balanced tone with smoother pacing",
+  sad:     "Daha düşük perde ve yumuşak ifade",
+  angry:   "Sert atak ve güçlü enerji",
+  excited: "Yüksek perde ve hızlı konuşma",
+  whisper: "Nefesli ton ve düşük enerji",
+  calm:    "Dengeli ton ve akıcı ritim",
+};
+
+const celebrityLabels: Record<CelebrityKey, string> = {
+  michael_jackson: "Michael Jackson",
+  morgan_freeman: "Morgan Freeman",
+  adele: "Adele",
+  james_earl_jones: "James Earl Jones",
+  taylor_swift: "Taylor Swift",
 };
 
 const genderModeLabels: Record<GenderMode, string> = {
-  male_to_female: "Male to Female",
-  female_to_male: "Female to Male",
-  adult_to_child: "Adult to Child",
-  adult_to_elderly: "Adult to Elderly",
-  child_to_adult: "Child to Adult",
+  male_to_female:   "Erkek → Kadın",
+  female_to_male:   "Kadın → Erkek",
+  adult_to_child:   "Yetişkin → Çocuk",
+  adult_to_elderly: "Yetişkin → Yaşlı",
+  child_to_adult:   "Çocuk → Yetişkin",
 };
 
 const genderModeDescriptions: Record<GenderMode, string> = {
-  male_to_female: "Higher pitch with a brighter vocal tract",
-  female_to_male: "Lower pitch with a deeper vocal tract",
-  adult_to_child: "Higher pitch and smaller vocal shape",
-  adult_to_elderly: "Softer pitch shift with aged timbre",
-  child_to_adult: "Lower pitch and fuller adult tone",
+  male_to_female:   "Daha yüksek perde ve parlak vokal yolu",
+  female_to_male:   "Daha düşük perde ve derin vokal yolu",
+  adult_to_child:   "Yüksek perde ve küçük vokal şekli",
+  adult_to_elderly: "Yaşlı timbr ile yumuşak perde kayması",
+  child_to_adult:   "Düşük perde ve dolgun yetişkin tonu",
 };
 
 function nowClock() {
@@ -79,18 +90,50 @@ function getAudioContextCtor() {
   return window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
 }
 
-async function buildWaveform(path: string, pointCount = 520): Promise<WaveformData> {
+function createAudioContext(sampleRate?: number) {
   const AudioContextCtor = getAudioContextCtor();
   if (!AudioContextCtor) {
     throw new Error("AudioContext is not available in this webview");
   }
 
+  if (sampleRate) {
+    try {
+      return new AudioContextCtor({ sampleRate });
+    } catch {
+      return new AudioContextCtor();
+    }
+  }
+
+  return new AudioContextCtor();
+}
+
+function resampleLinear(input: Float32Array, fromRate: number, toRate: number) {
+  if (fromRate === toRate || input.length === 0) {
+    return new Float32Array(input);
+  }
+
+  const ratio = toRate / fromRate;
+  const outputLength = Math.max(1, Math.round(input.length * ratio));
+  const output = new Float32Array(outputLength);
+
+  for (let index = 0; index < outputLength; index += 1) {
+    const sourceIndex = index / ratio;
+    const left = Math.floor(sourceIndex);
+    const right = Math.min(left + 1, input.length - 1);
+    const mix = sourceIndex - left;
+    output[index] = (input[left] ?? 0) * (1 - mix) + (input[right] ?? 0) * mix;
+  }
+
+  return output;
+}
+
+async function buildWaveform(path: string, pointCount = 520): Promise<WaveformData> {
   const response = await fetch(convertFileSrc(path));
   if (!response.ok) {
     throw new Error(`Could not read audio file (${response.status})`);
   }
 
-  const context = new AudioContextCtor();
+  const context = createAudioContext();
   try {
     const bytes = await response.arrayBuffer();
     const decoded = await context.decodeAudioData(bytes.slice(0));
@@ -309,6 +352,7 @@ export default function App() {
   const [activeNav, setActiveNav] = useState<NavigationKey>("workspace");
   const [activeModule, setActiveModule] = useState<ModuleKey>("emotion");
   const [selectedEmotion, setSelectedEmotion] = useState<EmotionKey>("angry");
+  const [selectedCelebrity, setSelectedCelebrity] = useState<CelebrityKey>("michael_jackson");
   const [selectedGenderMode, setSelectedGenderMode] = useState<GenderMode>("male_to_female");
   const [inputMode, setInputMode] = useState<InputMode>("file");
   const [featureTab, setFeatureTab] = useState<FeatureTab>("f0");
@@ -341,8 +385,8 @@ export default function App() {
   const [selectedVirtualMic, setSelectedVirtualMic] = useState<string | null>(null);
 
   const [logEntries, setLogEntries] = useState<LogEntry[]>([
-    { time: "14:32", text: "UI ready" },
-    { time: "14:33", text: "Pick source audio to begin", pending: true },
+    { time: "14:32", text: "Arayüz hazır" },
+    { time: "14:33", text: "Başlamak için kaynak ses seç", pending: true },
   ]);
 
   const waveformOrigRef = useRef<HTMLCanvasElement | null>(null);
@@ -378,7 +422,9 @@ export default function App() {
           ? "speaker_clone"
           : activeModule === "singing"
             ? "singing"
-            : "gender_age",
+            : activeModule === "celebrity"
+              ? "celebrity"
+              : "gender_age",
     [activeModule],
   );
 
@@ -407,10 +453,10 @@ export default function App() {
       await api.startBackend();
       const healthy = await api.backendHealth();
       setBackendReady(healthy);
-      addLog(healthy ? "Backend ready" : "Backend health failed", !healthy);
+      addLog(healthy ? "Backend hazır" : "Backend sağlık kontrolü başarısız", !healthy);
       return healthy;
     } catch (err) {
-      addLog(`Backend error: ${normalizeError(err)}`, true);
+      addLog(`Backend hatası: ${normalizeError(err)}`, true);
       return false;
     }
   };
@@ -420,9 +466,9 @@ export default function App() {
     try {
       await api.stopBackend();
       setBackendReady(false);
-      addLog("Backend stopped");
+      addLog("Backend durduruldu");
     } catch (err) {
-      addLog(`Backend stop failed: ${normalizeError(err)}`, true);
+      addLog(`Backend durdurulamadı: ${normalizeError(err)}`, true);
     }
   };
 
@@ -433,9 +479,9 @@ export default function App() {
       if (selectedVirtualMic && !devices.includes(selectedVirtualMic)) {
         setSelectedVirtualMic(null);
       }
-      addLog(`Virtual mics refreshed (${devices.length})`);
+      addLog(`Sanal mikrofonlar yenilendi (${devices.length})`);
     } catch (err) {
-      addLog(`Virtual mic refresh failed: ${normalizeError(err)}`, true);
+      addLog(`Sanal mikrofon yenilenemedi: ${normalizeError(err)}`, true);
     }
   };
 
@@ -447,11 +493,11 @@ export default function App() {
         setOutputPath(null);
         setSourceFile(selected);
         setInputMode("file");
-        addLog(`Input selected: ${basename(selected)}`);
+        addLog(`Kaynak seçildi: ${basename(selected)}`);
       }
       return selected;
     } catch (err) {
-      addLog(`Input picker failed: ${normalizeError(err)}`, true);
+      addLog(`Kaynak seçimi başarısız: ${normalizeError(err)}`, true);
       return null;
     }
   };
@@ -460,10 +506,10 @@ export default function App() {
     try {
       const selected = await api.pickReferenceFiles();
       setReferenceFiles(selected);
-      addLog(selected.length ? `References selected (${selected.length})` : "References cleared");
+      addLog(selected.length ? `Referans seçildi (${selected.length})` : "Referanslar temizlendi");
       return selected;
     } catch (err) {
-      addLog(`Reference picker failed: ${normalizeError(err)}`, true);
+      addLog(`Referans seçimi başarısız: ${normalizeError(err)}`, true);
       return [];
     }
   };
@@ -472,10 +518,10 @@ export default function App() {
     try {
       const selected = await api.pickMidiFile();
       setMidiFile(selected);
-      addLog(selected ? `MIDI selected: ${basename(selected)}` : "MIDI cleared");
+      addLog(selected ? `MIDI seçildi: ${basename(selected)}` : "MIDI temizlendi");
       return selected;
     } catch (err) {
-      addLog(`MIDI picker failed: ${normalizeError(err)}`, true);
+      addLog(`MIDI seçimi başarısız: ${normalizeError(err)}`, true);
       return null;
     }
   };
@@ -508,7 +554,7 @@ export default function App() {
 
     const totalSamples = chunks.reduce((total, chunk) => total + chunk.length, 0);
     if (totalSamples === 0) {
-      addLog("Recording did not capture audio", true);
+      addLog("Kayıt ses yakalayamadı", true);
       return null;
     }
 
@@ -521,10 +567,10 @@ export default function App() {
       setRecordedFile(path);
       setInputMode("mic");
       setRecordingSeconds(Number(((Date.now() - recordingStartedAtRef.current) / 1000).toFixed(1)));
-      addLog(`Mic recording saved: ${basename(path)}`);
+      addLog(`Mikrofon kaydı kaydedildi: ${basename(path)}`);
       return path;
     } catch (err) {
-      addLog(`Recording save failed: ${normalizeError(err)}`, true);
+      addLog(`Kayıt kaydedilemedi: ${normalizeError(err)}`, true);
       return null;
     }
   };
@@ -539,14 +585,7 @@ export default function App() {
     }
 
     if (!navigator.mediaDevices?.getUserMedia) {
-      addLog("Microphone recording is not available in this webview", true);
-      return;
-    }
-
-    const AudioContextCtor =
-      window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-    if (!AudioContextCtor) {
-      addLog("AudioContext is not available in this webview", true);
+      addLog("Bu pencerede mikrofon kaydı kullanılamıyor", true);
       return;
     }
 
@@ -555,7 +594,7 @@ export default function App() {
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
       });
-      const context = new AudioContextCtor();
+      const context = createAudioContext();
       const source = context.createMediaStreamSource(stream);
       const processor = context.createScriptProcessor(4096, 1, 1);
 
@@ -582,10 +621,10 @@ export default function App() {
         setRecordingSeconds((Date.now() - recordingStartedAtRef.current) / 1000);
       }, 150);
       setIsRecording(true);
-      addLog("Mic recording started");
+      addLog("Mikrofon kaydı başladı");
     } catch (err) {
       await stopRecording(false);
-      addLog(`Mic recording failed: ${normalizeError(err)}`, true);
+      addLog(`Mikrofon kaydı başarısız: ${normalizeError(err)}`, true);
     }
   };
 
@@ -605,14 +644,7 @@ export default function App() {
 
   const startLiveCapture = async (sessionId: string) => {
     if (!navigator.mediaDevices?.getUserMedia) {
-      addLog("Microphone capture is not available in this webview", true);
-      return;
-    }
-
-    const AudioContextCtor =
-      window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-    if (!AudioContextCtor) {
-      addLog("AudioContext is not available in this webview", true);
+      addLog("Bu pencerede mikrofon yakalama kullanılamıyor", true);
       return;
     }
 
@@ -620,9 +652,13 @@ export default function App() {
     const stream = await navigator.mediaDevices.getUserMedia({
       audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
     });
-    const context = new AudioContextCtor();
+    const context = createAudioContext(LIVE_SAMPLE_RATE);
     const source = context.createMediaStreamSource(stream);
-    const processor = context.createScriptProcessor(1024, 1, 1);
+    const processor = context.createScriptProcessor(2048, 1, 1);
+
+    if (context.sampleRate !== LIVE_SAMPLE_RATE) {
+      addLog(`Canlı giriş yeniden örneklendi ${Math.round(context.sampleRate)}Hz -> ${LIVE_SAMPLE_RATE}Hz`);
+    }
 
     processor.onaudioprocess = (event) => {
       event.outputBuffer.getChannelData(0).fill(0);
@@ -631,10 +667,11 @@ export default function App() {
       }
 
       liveProcessingRef.current = true;
-      const chunk = Array.from(event.inputBuffer.getChannelData(0));
+      const liveChunk = resampleLinear(event.inputBuffer.getChannelData(0), context.sampleRate, LIVE_SAMPLE_RATE);
+      const chunk = Array.from(liveChunk);
       void api
         .processLiveChunk(sessionId, chunk)
-        .catch((err) => addLog(`Live audio chunk failed: ${normalizeError(err)}`, true))
+        .catch((err) => addLog(`Canlı ses parçası işlenemedi: ${normalizeError(err)}`, true))
         .finally(() => {
           liveProcessingRef.current = false;
         });
@@ -647,7 +684,7 @@ export default function App() {
     liveAudioContextRef.current = context;
     liveSourceRef.current = source;
     liveProcessorRef.current = processor;
-    addLog("Microphone stream connected");
+    addLog("Mikrofon akışı bağlandı");
   };
 
   const stopLive = async (log = true) => {
@@ -659,14 +696,14 @@ export default function App() {
       try {
         await api.stopLiveSession(sessionToStop);
       } catch (err) {
-        addLog(`Stop live failed: ${normalizeError(err)}`, true);
+        addLog(`Canlı oturum durdurulamadı: ${normalizeError(err)}`, true);
       }
     }
 
     setLiveSessionId(null);
     setIsLive(false);
     if (log) {
-      addLog("Live session stopped");
+      addLog("Canlı oturum durduruldu");
     }
   };
 
@@ -691,6 +728,7 @@ export default function App() {
         activeTask,
         {
           emotion: selectedEmotion,
+          celebrity: selectedCelebrity,
           mode: selectedGenderMode,
           midi_path: midiFile,
           pitch_contour: activeModule === "singing" && !midiFile ? [manualPitchHz(pitchValue)] : null,
@@ -708,7 +746,7 @@ export default function App() {
       setLiveSessionId(sessionId);
       setIsLive(true);
       setInputMode("mic");
-      addLog(`Live session started (${activeTask})`);
+      addLog(`Canlı oturum başladı (${activeTask})`);
       await startLiveCapture(sessionId);
     } catch (err) {
       if (startedSessionId) {
@@ -722,7 +760,7 @@ export default function App() {
       setLiveSessionId(null);
       setIsLive(false);
       await stopLiveCapture();
-      addLog(`Live start failed: ${normalizeError(err)}`, true);
+      addLog(`Canlı oturum başlatılamadı: ${normalizeError(err)}`, true);
     }
   };
 
@@ -753,13 +791,13 @@ export default function App() {
   const togglePlayback = async () => {
     const playbackPath = outputPath ?? sourceFile;
     if (!playbackPath) {
-      addLog("Once bir ses dosyasi sec veya MIC ile kayit al.", true);
+      addLog("Önce bir ses dosyası seç veya mikrofonla kayıt al.", true);
       return;
     }
 
     const audio = outputAudioRef.current;
     if (!audio) {
-      addLog("Audio player is not ready", true);
+      addLog("Ses çalar hazır değil", true);
       return;
     }
 
@@ -780,9 +818,9 @@ export default function App() {
 
     try {
       await audio.play();
-      addLog(`${outputPath ? "Playing processed audio" : "Playing original audio"}: ${basename(playbackPath)}`);
+      addLog(`${outputPath ? "İşlenmiş ses çalınıyor" : "Orijinal ses çalınıyor"}: ${basename(playbackPath)}`);
     } catch (err) {
-      addLog(`Playback failed: ${normalizeError(err)}`, true);
+      addLog(`Ses çalma başarısız: ${normalizeError(err)}`, true);
     }
   };
 
@@ -796,7 +834,7 @@ export default function App() {
       inputPath = await pickSource();
     }
     if (!inputPath) {
-      addLog("Please select input audio first", true);
+      addLog("Önce kaynak ses dosyası seç", true);
       return;
     }
 
@@ -806,7 +844,7 @@ export default function App() {
     }
 
     setIsConverting(true);
-    addLog(`Conversion started for ${activeModule}`, true);
+    addLog(`Dönüşüm başladı: ${moduleMeta[activeModule].labelTr}`, true);
 
     try {
       let result: ConversionPayload;
@@ -815,13 +853,15 @@ export default function App() {
         result = await api.convertEmotion(inputPath, selectedEmotion, pitchValue, rateValue, energyValue, null);
       } else if (activeTask === "gender_age") {
         result = await api.convertGenderAge(inputPath, selectedGenderMode, null);
+      } else if (activeTask === "celebrity") {
+        result = await api.convertCelebrity(inputPath, selectedCelebrity, null);
       } else if (activeTask === "speaker_clone") {
         let refs = referenceFiles;
         if (refs.length === 0) {
           refs = await pickReferences();
         }
         if (refs.length === 0) {
-          throw new Error("Speaker clone requires reference files");
+          throw new Error("Konuşmacı klonu için referans dosya gerekli");
         }
         result = await api.convertSpeakerClone(inputPath, refs, null);
       } else {
@@ -831,7 +871,7 @@ export default function App() {
 
       const nextOutputPath = getOutputPath(result);
       if (!nextOutputPath) {
-        throw new Error("Backend did not return an output audio path");
+        throw new Error("Backend çıktı ses yolu döndürmedi");
       }
 
       setOutputPath(nextOutputPath);
@@ -841,9 +881,9 @@ export default function App() {
         setPlaybackDuration(result.metrics.output_duration_seconds);
       }
 
-      addLog(`Output generated: ${basename(nextOutputPath)}`);
+      addLog(`Çıktı oluşturuldu: ${basename(nextOutputPath)}`);
     } catch (err) {
-      addLog(`Conversion failed: ${normalizeError(err)}`, true);
+      addLog(`Dönüşüm başarısız: ${normalizeError(err)}`, true);
     } finally {
       setIsConverting(false);
     }
@@ -878,7 +918,7 @@ export default function App() {
           setPlaybackDuration(waveform.duration);
         }
       })
-      .catch((err) => addLog(`Original waveform failed: ${normalizeError(err)}`, true));
+      .catch((err) => addLog(`Orijinal dalga formu çıkarılamadı: ${normalizeError(err)}`, true));
 
     return () => {
       cancelled = true;
@@ -902,7 +942,7 @@ export default function App() {
         setProcessedWaveform(waveform);
         setPlaybackDuration(waveform.duration);
       })
-      .catch((err) => addLog(`Processed waveform failed: ${normalizeError(err)}`, true));
+      .catch((err) => addLog(`İşlenmiş dalga formu çıkarılamadı: ${normalizeError(err)}`, true));
 
     return () => {
       cancelled = true;
@@ -932,7 +972,7 @@ export default function App() {
     };
   }, []);
 
-  const statusText = isLive ? "live" : backendReady ? "ready" : "offline";
+  const statusText = isLive ? "canlı" : backendReady ? "hazır" : "çevrimdışı";
   const statusColor = isLive || backendReady ? "#22d3b0" : "#f87171";
   const modeInfo =
     activeModule === "emotion"
@@ -942,14 +982,16 @@ export default function App() {
         : activeModule === "singing"
           ? midiFile
             ? `MIDI: ${basename(midiFile)}`
-            : `Manual target: ${Math.round(manualPitchHz(pitchValue))} Hz`
-          : referenceFiles.length
-            ? `${referenceFiles.length} reference file${referenceFiles.length > 1 ? "s" : ""}`
-            : "Reference files required";
+            : `Manuel hedef: ${Math.round(manualPitchHz(pitchValue))} Hz`
+          : activeModule === "celebrity"
+            ? `Profil: ${celebrityLabels[selectedCelebrity]}`
+            : referenceFiles.length
+              ? `${referenceFiles.length} referans dosyası`
+              : "Referans dosyası gerekli";
   const speakerReferencesRequired = activeModule === "speaker";
   const singingMidiSuggested = activeModule === "singing";
-  const convertBlockedReason = speakerReferencesRequired && referenceFiles.length === 0 ? "Speaker / Clone icin en az bir referans dosyasi sec." : null;
-  const convertButtonLabel = isConverting ? "Processing..." : convertBlockedReason ? "References Required" : "Convert Audio";
+  const convertBlockedReason = speakerReferencesRequired && referenceFiles.length === 0 ? "Konuşmacı Klonu için en az bir referans dosyası seç." : null;
+  const convertButtonLabel = isConverting ? "İşleniyor..." : convertBlockedReason ? "Referans Gerekli" : "Sesi Dönüştür";
 
   return (
     <div className="app">
@@ -958,52 +1000,62 @@ export default function App() {
           <div className="logo-icon">S</div>
           <div>
             <div className="logo-text">SpeechWarp</div>
-            <div className="logo-sub">v0.9 - CENG 384</div>
+            <div className="logo-sub">v0.9 · CENG 384</div>
           </div>
         </div>
         <div className="topbar-right">
           <div className="status-dot" style={{ background: statusColor, boxShadow: `0 0 6px ${statusColor}` }}></div>
           <span className="status-text">{statusText}</span>
-          <div className="tag">{moduleMeta[activeModule].label}</div>
-          <div className="tag">{inputMode === "mic" ? "Mic Input" : "File Input"}</div>
+          <div className="tag">{moduleMeta[activeModule].labelTr}</div>
+          <div className="tag">{inputMode === "mic" ? "Mikrofon" : "Dosya"}</div>
         </div>
       </header>
 
       <aside className="sidebar">
-        <div className="sidebar-section">Navigation</div>
+        <div className="sidebar-section">Gezinti</div>
         <button className={`nav-item nav-button ${activeNav === "workspace" ? "active" : ""}`} onClick={() => setActiveNav("workspace")} type="button">
-          <span className="nav-icon">W</span>
-          Workspace
+          <span className="nav-icon">
+            <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+          </span>
+          Çalışma Alanı
         </button>
 
-        <div className="sidebar-section">DSP Modules</div>
+        <div className="sidebar-section">DSP Modülleri</div>
         {moduleButtons.map((item) => (
           <button
             className={`nav-item nav-button ${activeModule === item.key ? "active" : ""}`}
             key={item.key}
             onClick={() => {
-              if (isLive) {
-                void stopLive(false);
-              }
+              if (isLive) void stopLive(false);
               setActiveNav("workspace");
               setActiveModule(item.key);
-              addLog(`Module selected: ${item.label}`);
+              addLog(`Modül seçildi: ${item.labelTr}`);
             }}
             type="button"
           >
-            <span className="nav-icon">M</span>
-            {item.label}
+            <span className="nav-icon">
+              {item.key === "emotion"   && <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M8.5 14s1 2 3.5 2 3.5-2 3.5-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>}
+              {item.key === "gender"    && <svg viewBox="0 0 24 24"><circle cx="10" cy="8" r="4"/><path d="M2 20c0-4 3.6-7 8-7"/><path d="M16 8h6m-3-3 3 3-3 3"/></svg>}
+              {item.key === "speaker"   && <svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>}
+              {item.key === "singing"   && <svg viewBox="0 0 24 24"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>}
+              {item.key === "celebrity" && <svg viewBox="0 0 24 24"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>}
+            </span>
+            {item.labelTr}
           </button>
         ))}
 
-        <div className="sidebar-section">System</div>
+        <div className="sidebar-section">Sistem</div>
         <button className={`nav-item nav-button ${activeNav === "evaluation" ? "active" : ""}`} onClick={() => setActiveNav("evaluation")} type="button">
-          <span className="nav-icon">E</span>
-          Evaluation
+          <span className="nav-icon">
+            <svg viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+          </span>
+          Değerlendirme
         </button>
         <button className={`nav-item nav-button ${activeNav === "settings" ? "active" : ""}`} onClick={() => setActiveNav("settings")} type="button">
-          <span className="nav-icon">S</span>
-          Settings
+          <span className="nav-icon">
+            <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+          </span>
+          Ayarlar
         </button>
       </aside>
 
@@ -1012,25 +1064,21 @@ export default function App() {
           <>
             <section className="card">
               <div className="section-header">
-                <span className="section-title">// audio_input</span>
+                <span className="section-title">Ses Girişi</span>
                 <div className="section-controls">
                   <button
                     className={`btn-xs ${inputMode === "file" ? "active" : ""}`}
                     onClick={() => {
                       setInputMode("file");
-                      if (isLive) {
-                        void stopLive();
-                      }
-                      if (isRecording) {
-                        void stopRecording(false);
-                      }
+                      if (isLive) void stopLive();
+                      if (isRecording) void stopRecording(false);
                     }}
                     type="button"
                   >
-                    FILE
+                    DOSYA
                   </button>
                   <button className={`btn-xs ${inputMode === "mic" ? "active" : ""}`} onClick={() => setInputMode("mic")} type="button">
-                    MIC
+                    MİK
                   </button>
                 </div>
               </div>
@@ -1039,24 +1087,24 @@ export default function App() {
                 <div className="drop-zone-title">
                   {inputMode === "file"
                     ? sourceFile
-                      ? `${basename(sourceFile)} loaded`
-                      : "Drop audio file here"
+                      ? `${basename(sourceFile)} yüklendi`
+                      : "Ses dosyasını buraya bırak"
                     : isLive
-                      ? "Microphone live session running"
+                      ? "Canlı mikrofon oturumu çalışıyor"
                       : recordedFile
-                        ? `${basename(recordedFile)} ready`
-                        : "Microphone recorder"}
+                        ? `${basename(recordedFile)} hazır`
+                        : "Mikrofon kaydedici"}
                 </div>
                 <div className="drop-zone-sub">
                   {inputMode === "file"
                     ? sourceFile
-                      ? "Click to pick another file"
-                      : "or click to browse"
+                      ? "Başka bir dosya seçmek için tıkla"
+                      : "ya da dosya seçmek için tıkla"
                     : isLive
-                      ? `Session: ${liveSessionId?.slice(0, 8) ?? "active"}`
+                      ? `Oturum: ${liveSessionId?.slice(0, 8) ?? "aktif"}`
                       : recordedFile
-                        ? "Use Convert Audio or record again"
-                        : "Press Record to capture a WAV input"}
+                        ? "Dönüştür veya yeniden kaydet"
+                        : "WAV girdi yakalamak için Kaydet'e bas"}
                 </div>
                 <div className="fmt-tags">
                   <span className="fmt-tag">WAV</span>
@@ -1069,13 +1117,9 @@ export default function App() {
                     <div className={`recording-dot ${isRecording ? "active" : ""}`}></div>
                     <div className="recording-time">{recordingSeconds.toFixed(1)}s</div>
                     {isRecording ? (
-                      <button className="btn-xs active" onClick={() => void stopRecording(true)} type="button">
-                        Stop & Save
-                      </button>
+                      <button className="btn-xs active" onClick={() => void stopRecording(true)} type="button">Dur & Kaydet</button>
                     ) : (
-                      <button className="btn-xs active" onClick={() => void startRecording()} type="button">
-                        Record
-                      </button>
+                      <button className="btn-xs active" onClick={() => void startRecording()} type="button">Kaydet</button>
                     )}
                     {recordedFile ? <span className="recording-file">{basename(recordedFile)}</span> : null}
                   </div>
@@ -1086,12 +1130,12 @@ export default function App() {
                 <div className="action-row contextual">
                   {speakerReferencesRequired ? (
                     <button className="btn-xs active" onClick={() => void pickReferences()} type="button">
-                      {referenceFiles.length ? "Change References" : "Select References"}
+                      {referenceFiles.length ? "Referansları Değiştir" : "Referans Seç"}
                     </button>
                   ) : null}
                   {singingMidiSuggested ? (
                     <button className="btn-xs active" onClick={() => void pickMidi()} type="button">
-                      {midiFile ? "Change MIDI" : "Select MIDI"}
+                      {midiFile ? "MIDI Değiştir" : "MIDI Seç"}
                     </button>
                   ) : null}
                 </div>
@@ -1101,59 +1145,63 @@ export default function App() {
                 {convertBlockedReason
                   ? convertBlockedReason
                   : activeModule === "emotion"
-                    ? `${selectedEmotion} emotion profili secili ve donusume hazir.`
+                    ? `${selectedEmotion} duygu profili seçili ve dönüşüme hazır.`
                     : activeModule === "gender"
-                      ? `${genderModeLabels[selectedGenderMode]} modu secili ve donusume hazir.`
-                      : singingMidiSuggested
-                        ? midiFile
-                          ? "Singing modu secilen MIDI melodisini kullanacak."
-                          : "Singing modu pitch slider'indan hedef nota uretecek."
-                        : `${referenceFiles.length} referans dosyasi hazir.`}
+                      ? `${genderModeLabels[selectedGenderMode]} modu seçili ve dönüşüme hazır.`
+                      : activeModule === "celebrity"
+                        ? `${celebrityLabels[selectedCelebrity]} profili secili ve donusume hazir.`
+                        : singingMidiSuggested
+                          ? midiFile
+                            ? "Şarkı modu seçilen MIDI melodisini kullanacak."
+                            : "Şarkı modu pitch slider'ından hedef nota üretecek."
+                          : `${referenceFiles.length} referans dosyası hazır.`}
               </div>
 
               <div className="selection-strip">
                 <div className="selection-chip active">
-                  <span className="selection-label">Module</span>
-                  <span className="selection-value">{moduleMeta[activeModule].label}</span>
+                  <span className="selection-label">Modül</span>
+                  <span className="selection-value">{moduleMeta[activeModule].labelTr}</span>
                 </div>
                 <div className={`selection-chip ${sourceFile ? "ok" : ""}`}>
-                  <span className="selection-label">Source</span>
-                  <span className="selection-value">{sourceFile ? basename(sourceFile) : "Not selected"}</span>
+                  <span className="selection-label">Kaynak</span>
+                  <span className="selection-value">{sourceFile ? basename(sourceFile) : "Seçilmedi"}</span>
                 </div>
-                <div className={`selection-chip ${referenceFiles.length > 0 || activeModule === "gender" || activeModule === "emotion" ? "ok" : speakerReferencesRequired ? "warn" : ""}`}>
+                <div className={`selection-chip ${referenceFiles.length > 0 || activeModule === "gender" || activeModule === "emotion" || activeModule === "celebrity" ? "ok" : speakerReferencesRequired ? "warn" : ""}`}>
                   <span className="selection-label">
-                    {activeModule === "emotion" ? "Emotion" : activeModule === "gender" ? "Mode" : "References"}
+                    {activeModule === "emotion" ? "Duygu" : activeModule === "gender" ? "Mod" : activeModule === "celebrity" ? "Profil" : "Referanslar"}
                   </span>
                   <span className="selection-value">
                     {activeModule === "emotion"
                       ? selectedEmotion
                       : activeModule === "gender"
                         ? genderModeLabels[selectedGenderMode]
-                        : referenceFiles.length > 0
-                          ? `${referenceFiles.length} file${referenceFiles.length > 1 ? "s" : ""}`
-                          : "None"}
+                        : activeModule === "celebrity"
+                          ? celebrityLabels[selectedCelebrity]
+                          : referenceFiles.length > 0
+                            ? `${referenceFiles.length} dosya`
+                            : "Yok"}
                   </span>
                 </div>
                 <div className={`selection-chip ${midiFile ? "ok" : singingMidiSuggested ? "active" : ""}`}>
                   <span className="selection-label">MIDI</span>
-                  <span className="selection-value">{midiFile ? basename(midiFile) : singingMidiSuggested ? "Suggested" : "Optional"}</span>
+                  <span className="selection-value">{midiFile ? basename(midiFile) : singingMidiSuggested ? "Önerilen" : "İsteğe bağlı"}</span>
                 </div>
               </div>
 
               <div className="waveform-area">
-                <div className="waveform-label">original</div>
+                <div className="waveform-label">orijinal</div>
                 <div className="waveform-label right">{playbackDuration.toFixed(1)}s</div>
                 <canvas className="waveform" ref={waveformOrigRef}></canvas>
               </div>
 
               <div className="waveform-area processed">
-                <div className="waveform-label">processed</div>
+                <div className="waveform-label">işlenmiş</div>
                 <canvas className="waveform" ref={waveformProcRef}></canvas>
               </div>
 
               <div className="playback-bar">
                 <button className="play-btn" disabled={!outputPath && !sourceFile} onClick={() => void togglePlayback()} type="button">
-                  {playing ? "||" : ">"}
+                  {playing ? "❚❚" : "▶"}
                 </button>
                 <div className="progress-wrap">
                   <div className="progress-bg" onClick={seekTo}>
@@ -1163,15 +1211,10 @@ export default function App() {
                 </div>
                 <span className="time-text">{formatTime(progress * playbackDuration)} / {formatTime(playbackDuration)}</span>
                 <audio
-                  onEnded={() => {
-                    setPlaying(false);
-                    setProgress(1);
-                  }}
+                  onEnded={() => { setPlaying(false); setProgress(1); }}
                   onLoadedMetadata={(event) => {
                     const duration = event.currentTarget.duration;
-                    if (Number.isFinite(duration) && duration > 0) {
-                      setPlaybackDuration(duration);
-                    }
+                    if (Number.isFinite(duration) && duration > 0) setPlaybackDuration(duration);
                   }}
                   onPause={() => setPlaying(false)}
                   onPlay={() => setPlaying(true)}
@@ -1190,11 +1233,11 @@ export default function App() {
 
             <section className="card">
               <div className="section-header">
-                <span className="section-title">// f0_pitch_contour</span>
+                <span className="section-title">Frekans Analizi</span>
                 <div className="section-controls">
                   <button className={`btn-xs ${featureTab === "f0" ? "active" : ""}`} onClick={() => setFeatureTab("f0")} type="button">F0</button>
                   <button className={`btn-xs ${featureTab === "mfcc" ? "active" : ""}`} onClick={() => setFeatureTab("mfcc")} type="button">MFCC</button>
-                  <button className={`btn-xs ${featureTab === "energy" ? "active" : ""}`} onClick={() => setFeatureTab("energy")} type="button">ENERGY</button>
+                  <button className={`btn-xs ${featureTab === "energy" ? "active" : ""}`} onClick={() => setFeatureTab("energy")} type="button">ENERJİ</button>
                 </div>
               </div>
               <div className="pitch-area">
@@ -1206,31 +1249,31 @@ export default function App() {
           <>
             <section className="card">
               <div className="section-header">
-                <span className="section-title">// evaluation</span>
+                <span className="section-title">Değerlendirme</span>
               </div>
               <div className="status-grid">
                 <div className="status-tile">
-                  <span className="selection-label">Task</span>
-                  <span className="selection-value">{moduleMeta[activeModule].label}</span>
+                  <span className="selection-label">Görev</span>
+                  <span className="selection-value">{moduleMeta[activeModule].labelTr}</span>
                 </div>
                 <div className="status-tile">
-                  <span className="selection-label">Mode</span>
+                  <span className="selection-label">Mod</span>
                   <span className="selection-value">{modeInfo}</span>
                 </div>
                 <div className="status-tile">
-                  <span className="selection-label">Input</span>
-                  <span className="selection-value">{sourceFile ? basename(sourceFile) : inputMode === "mic" ? "Microphone" : "Not selected"}</span>
+                  <span className="selection-label">Giriş</span>
+                  <span className="selection-value">{sourceFile ? basename(sourceFile) : inputMode === "mic" ? "Mikrofon" : "Seçilmedi"}</span>
                 </div>
                 <div className="status-tile">
-                  <span className="selection-label">Output</span>
-                  <span className="selection-value">{outputPath ? basename(outputPath) : "No conversion yet"}</span>
+                  <span className="selection-label">Çıkış</span>
+                  <span className="selection-value">{outputPath ? basename(outputPath) : "Henüz dönüşüm yok"}</span>
                 </div>
               </div>
             </section>
 
             <section className="card">
               <div className="section-header">
-                <span className="section-title">// metrics_detail</span>
+                <span className="selection-title">Metrik Detayları</span>
               </div>
               <div className="detail-list">
                 {Object.entries(metrics).length ? (
@@ -1241,7 +1284,7 @@ export default function App() {
                     </div>
                   ))
                 ) : (
-                  <div className="empty-state">Run a conversion to populate backend metrics.</div>
+                  <div className="empty-state">Backend metriklerini görmek için bir dönüşüm çalıştır.</div>
                 )}
               </div>
             </section>
@@ -1250,24 +1293,24 @@ export default function App() {
           <>
             <section className="card">
               <div className="section-header">
-                <span className="section-title">// settings</span>
+                <span className="section-title">Ayarlar</span>
               </div>
               <div className="settings-grid">
                 <div className="detail-row">
                   <span>Backend</span>
-                  <strong>{backendReady ? "ready" : "offline"}</strong>
+                  <strong>{backendReady ? "hazır" : "çevrimdışı"}</strong>
                 </div>
                 <div className="detail-row">
-                  <span>Live session</span>
-                  <strong>{isLive ? liveSessionId?.slice(0, 8) ?? "active" : "stopped"}</strong>
+                  <span>Canlı oturum</span>
+                  <strong>{isLive ? liveSessionId?.slice(0, 8) ?? "aktif" : "durduruldu"}</strong>
                 </div>
                 <div className="detail-row">
-                  <span>Virtual mic devices</span>
+                  <span>Sanal mikrofon aygıtları</span>
                   <strong>{virtualMicDevices.length}</strong>
                 </div>
                 <div className="settings-actions">
-                  <button className="btn-xs active" onClick={() => void ensureBackend()} type="button">Start Backend</button>
-                  <button className="btn-xs" onClick={() => void stopBackend()} type="button">Stop Backend</button>
+                  <button className="btn-xs active" onClick={() => void ensureBackend()} type="button">Backend Başlat</button>
+                  <button className="btn-xs" onClick={() => void stopBackend()} type="button">Backend Durdur</button>
                 </div>
               </div>
             </section>
@@ -1275,31 +1318,29 @@ export default function App() {
         )}
 
         <section className="metric-grid">
-          <div className="metric-card ok"><div className="metric-label">LATENCY</div><div className="metric-val">{metricValues.latencyMs} <span>ms</span></div></div>
-          <div className="metric-card ok"><div className="metric-label">PROC TIME</div><div className="metric-val">{metricValues.processingSeconds.toFixed(2)} <span>s</span></div></div>
-          <div className="metric-card"><div className="metric-label">FIDELITY</div><div className="metric-val">{metricValues.fidelity.toFixed(1)} <span>/5</span></div></div>
-          <div className="metric-card ok"><div className="metric-label">INTELLIG.</div><div className="metric-val">{metricValues.intelligibility.toFixed(1)} <span>/5</span></div></div>
+          <div className="metric-card ok"><div className="metric-label">GECİKME</div><div className="metric-val">{metricValues.latencyMs} <span>ms</span></div></div>
+          <div className="metric-card ok"><div className="metric-label">İŞLEM SÜRESİ</div><div className="metric-val">{metricValues.processingSeconds.toFixed(2)} <span>s</span></div></div>
+          <div className="metric-card"><div className="metric-label">DOĞRULUK</div><div className="metric-val">{metricValues.fidelity.toFixed(1)} <span>/5</span></div></div>
+          <div className="metric-card ok"><div className="metric-label">ANLAŞILIRLIK</div><div className="metric-val">{metricValues.intelligibility.toFixed(1)} <span>/5</span></div></div>
         </section>
       </main>
 
       <aside className="panel">
         <div>
-          <div className="panel-title">// PARAMETERS</div>
+          <div className="panel-title">Parametreler</div>
 
           {activeModule === "emotion" ? (
             <>
               <div className="param-row">
-                <div className="param-header"><span className="param-name">Pitch Shift</span><span className="param-val">{pitchValue >= 0 ? "+" : ""}{pitchValue.toFixed(1)} st</span></div>
+                <div className="param-header"><span className="param-name">Perde Kayması</span><span className="param-val">{pitchValue >= 0 ? "+" : ""}{pitchValue.toFixed(1)} st</span></div>
                 <input type="range" min={-6} max={6} step={0.1} value={pitchValue} onChange={(e) => setPitchValue(Number(e.target.value))} />
               </div>
-
               <div className="param-row">
-                <div className="param-header"><span className="param-name">Speech Rate</span><span className="param-val teal">{rateValue.toFixed(2)}x</span></div>
+                <div className="param-header"><span className="param-name">Konuşma Hızı</span><span className="param-val teal">{rateValue.toFixed(2)}x</span></div>
                 <input type="range" className="teal" min={0.6} max={1.5} step={0.01} value={rateValue} onChange={(e) => setRateValue(Number(e.target.value))} />
               </div>
-
               <div className="param-row">
-                <div className="param-header"><span className="param-name">Energy</span><span className="param-val amber">{energyValue.toFixed(2)}x</span></div>
+                <div className="param-header"><span className="param-name">Enerji</span><span className="param-val amber">{energyValue.toFixed(2)}x</span></div>
                 <input type="range" className="amber" min={0.2} max={2.0} step={0.05} value={energyValue} onChange={(e) => setEnergyValue(Number(e.target.value))} />
               </div>
             </>
@@ -1308,17 +1349,42 @@ export default function App() {
           {activeModule === "singing" ? (
             <div className="param-row">
               <div className="param-header">
-                <span className="param-name">Manual Target</span>
+                <span className="param-name">Manuel Hedef</span>
                 <span className="param-val">{Math.round(manualPitchHz(pitchValue))} Hz</span>
               </div>
               <input type="range" min={-12} max={12} step={0.1} value={pitchValue} onChange={(e) => setPitchValue(Number(e.target.value))} />
-              <div className="mini-note">{midiFile ? "MIDI selected, manual target is ignored." : "Used when no MIDI file is selected."}</div>
+              <div className="mini-note">{midiFile ? "MIDI seçili, manuel hedef göz ardı edilir." : "MIDI dosyası seçilmediğinde kullanılır."}</div>
             </div>
           ) : null}
 
           {activeModule === "speaker" ? (
             <div className={`mini-note ${referenceFiles.length ? "" : "warn"}`}>
-              {referenceFiles.length ? `${referenceFiles.length} reference file${referenceFiles.length > 1 ? "s" : ""} selected.` : "Select reference files from the audio input area."}
+              {referenceFiles.length ? `${referenceFiles.length} referans dosyası seçili.` : "Ses girişi alanından referans dosyaları seç."}
+            </div>
+          ) : null}
+
+          {activeModule === "celebrity" ? (
+            <div>
+              <div className="mini-note">
+                Ünlü ses klonu modülü aktif. Kaynak ses dosyasını seçip dönüştür.
+              </div>
+              <div className="panel-title" style={{ marginTop: "10px" }}>Hedef Profil</div>
+              <div className="chip-row vertical">
+                {(Object.keys(celebrityLabels) as CelebrityKey[]).map((celebrity) => (
+                  <button
+                    className={`chip wide ${selectedCelebrity === celebrity ? "selected" : ""}`}
+                    key={celebrity}
+                    onClick={() => {
+                      setSelectedCelebrity(celebrity);
+                      addLog(`Ünlü profili: ${celebrityLabels[celebrity]}`);
+                    }}
+                    type="button"
+                  >
+                    {celebrityLabels[celebrity]}
+                  </button>
+                ))}
+              </div>
+              <div className="mini-note">{modeInfo}</div>
             </div>
           ) : null}
 
@@ -1331,7 +1397,7 @@ export default function App() {
                     key={mode}
                     onClick={() => {
                       setSelectedGenderMode(mode);
-                      addLog(`Gender mode set: ${genderModeLabels[mode]}`);
+                      addLog(`Cinsiyet modu: ${genderModeLabels[mode]}`);
                     }}
                     type="button"
                   >
@@ -1345,45 +1411,45 @@ export default function App() {
 
           {activeModule === "emotion" ? (
             <div>
-            <div className="panel-title">// TARGET_EMOTION</div>
-            <div className="chip-row">
-              {(["sad", "angry", "excited", "whisper", "calm"] as EmotionKey[]).map((emotion) => (
-                <button
-                  className={`chip ${selectedEmotion === emotion ? `sel-${emotion}` : ""}`}
-                  key={emotion}
-                  onClick={() => {
-                    setSelectedEmotion(emotion);
-                    addLog(`Emotion target set: ${emotion}`);
-                  }}
-                  type="button"
-                >
-                  {emotion}
-                </button>
-              ))}
+              <div className="panel-title" style={{ marginTop: "10px" }}>Hedef Duygu</div>
+              <div className="chip-row">
+                {(["sad", "angry", "excited", "whisper", "calm"] as EmotionKey[]).map((emotion) => (
+                  <button
+                    className={`chip ${selectedEmotion === emotion ? `sel-${emotion}` : ""}`}
+                    key={emotion}
+                    onClick={() => {
+                      setSelectedEmotion(emotion);
+                      addLog(`Duygu hedefi: ${emotion}`);
+                    }}
+                    type="button"
+                  >
+                    {emotion}
+                  </button>
+                ))}
+              </div>
+              <div className="mini-note">{modeInfo}</div>
             </div>
-            <div className="mini-note">{modeInfo}</div>
-          </div>
           ) : null}
         </div>
 
         <div className="panel-live">
-          <div className="panel-title">// LIVE</div>
+          <div className="panel-title">Canlı Mod</div>
           <div className="check-row">
             <input checked={routeToVirtualMic} id="route-vmic" onChange={(e) => setRouteToVirtualMic(e.target.checked)} type="checkbox" />
-            <label htmlFor="route-vmic">Route to virtual mic</label>
+            <label htmlFor="route-vmic">Sanal mikrofona yönlendir</label>
           </div>
-
           <div className="panel-inline">
             <select className="select-field" value={selectedVirtualMic ?? ""} onChange={(e) => setSelectedVirtualMic(e.target.value || null)}>
-              <option value="">System default output</option>
+              <option value="">Sistem varsayılan çıkışı</option>
               {virtualMicDevices.map((device) => (
                 <option key={device} value={device}>{device}</option>
               ))}
             </select>
-            <button className="btn-xs" onClick={() => void refreshVirtualMics()} type="button">Refresh</button>
+            <button className="btn-xs" onClick={() => void refreshVirtualMics()} type="button">Yenile</button>
           </div>
-
-          <button className="btn-xs" onClick={() => void startLive()} type="button">{isLive ? "Stop Live Session" : "Start Live Session"}</button>
+          <button className="btn-xs" onClick={() => void startLive()} type="button">
+            {isLive ? "Canlı Oturumu Durdur" : "Canlı Oturum Başlat"}
+          </button>
         </div>
 
         <button className="convert-btn" disabled={Boolean(convertBlockedReason) || isConverting} onClick={() => void runConvert()} type="button">
@@ -1391,7 +1457,7 @@ export default function App() {
         </button>
 
         <div>
-          <div className="panel-title">// SESSION_LOG</div>
+          <div className="panel-title">Oturum Günlüğü</div>
           <div className="log-list">
             {logEntries.map((entry, index) => (
               <div className="log-entry" key={`${entry.time}-${index}`}>
@@ -1405,4 +1471,5 @@ export default function App() {
       </aside>
     </div>
   );
+
 }
