@@ -2,10 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import librosa
 import numpy as np
 
-from backend.audio.features import extract_pitch_contour, stretch_to_length
+from backend.audio.features import extract_pitch_contour, pitch_shift_audio, stretch_to_length, time_stretch_audio
 
 
 def _target_pitch_hz(midi_path: str | None, pitch_contour: list[float] | None) -> float:
@@ -45,9 +44,8 @@ def convert_to_singing(
     target_hz = _target_pitch_hz(midi_path, pitch_contour)
 
     semitone_delta = 12.0 * np.log2(max(target_hz, 1.0) / max(source_hz, 1.0))
-    pitched = librosa.effects.pitch_shift(y=x, sr=sample_rate, n_steps=float(semitone_delta))
-
-    stretched = librosa.effects.time_stretch(y=np.asarray(pitched, dtype=np.float32), rate=0.92)
+    pitched = pitch_shift_audio(x, sample_rate, float(semitone_delta))
+    stretched = time_stretch_audio(np.asarray(pitched, dtype=np.float32), rate=0.92)
 
     # Mild spectral brightening to emulate sung phonation.
     spec = np.fft.rfft(stretched)

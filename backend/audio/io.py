@@ -10,11 +10,13 @@ from __future__ import annotations
 
 import logging
 import warnings
+from math import gcd
 from pathlib import Path
 
 import librosa
 import numpy as np
 import soundfile as sf
+from scipy import signal
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +24,18 @@ SUPPORTED_EXTENSIONS = {".wav", ".mp3", ".flac", ".ogg", ".m4a"}
 
 # Minimum ses süresi uyarı eşiği (saniye)
 _MIN_DURATION_WARN_SEC: float = 0.3
+
+
+def _resample_mono(audio: np.ndarray, source_rate: int, target_rate: int) -> np.ndarray:
+    """Resample mono audio without routing back through librosa.load."""
+    x = np.asarray(audio, dtype=np.float32)
+    if x.size == 0 or source_rate == target_rate:
+        return x
+
+    divisor = gcd(int(source_rate), int(target_rate))
+    up = int(target_rate) // divisor
+    down = int(source_rate) // divisor
+    return signal.resample_poly(x, up, down).astype(np.float32)
 
 
 def validate_audio_path(path: str) -> Path:
@@ -62,7 +76,16 @@ def load_audio_mono(
         Peak-normalize edilmiş mono float32 ses verisi.
     """
     target = validate_audio_path(path)
-    audio, _ = librosa.load(str(target), sr=sample_rate, mono=True)
+    try:
+        audio, source_rate = sf.read(str(target), dtype="float32", always_2d=False)
+        audio = np.asarray(audio, dtype=np.float32)
+        if audio.ndim > 1:
+            audio = np.mean(audio, axis=1, dtype=np.float32)
+        if source_rate != sample_rate:
+            audio = _resample_mono(audio, int(source_rate), sample_rate)
+    except Exception:
+        audio, _ = librosa.load(str(target), sr=sample_rate, mono=True)
+        audio = np.asarray(audio, dtype=np.float32)
 
     # Çok kısa ses uyarısı
     duration_sec = audio.size / max(sample_rate, 1)

@@ -5,6 +5,7 @@ import { api } from "@/lib/tauri";
 
 type ModuleKey = "emotion" | "gender" | "speaker" | "singing" | "celebrity";
 type EmotionKey = "sad" | "angry" | "excited" | "whisper" | "calm";
+type CelebrityKey = "michael_jackson" | "morgan_freeman" | "adele" | "james_earl_jones" | "taylor_swift";
 type GenderMode = "male_to_female" | "female_to_male" | "adult_to_child" | "adult_to_elderly" | "child_to_adult";
 type NavigationKey = "workspace" | "evaluation" | "settings";
 type InputMode = "file" | "mic";
@@ -44,6 +45,14 @@ const emotionDescriptions: Record<EmotionKey, string> = {
   excited: "Yüksek perde ve hızlı konuşma",
   whisper: "Nefesli ton ve düşük enerji",
   calm:    "Dengeli ton ve akıcı ritim",
+};
+
+const celebrityLabels: Record<CelebrityKey, string> = {
+  michael_jackson: "Michael Jackson",
+  morgan_freeman: "Morgan Freeman",
+  adele: "Adele",
+  james_earl_jones: "James Earl Jones",
+  taylor_swift: "Taylor Swift",
 };
 
 const genderModeLabels: Record<GenderMode, string> = {
@@ -343,6 +352,7 @@ export default function App() {
   const [activeNav, setActiveNav] = useState<NavigationKey>("workspace");
   const [activeModule, setActiveModule] = useState<ModuleKey>("emotion");
   const [selectedEmotion, setSelectedEmotion] = useState<EmotionKey>("angry");
+  const [selectedCelebrity, setSelectedCelebrity] = useState<CelebrityKey>("michael_jackson");
   const [selectedGenderMode, setSelectedGenderMode] = useState<GenderMode>("male_to_female");
   const [inputMode, setInputMode] = useState<InputMode>("file");
   const [featureTab, setFeatureTab] = useState<FeatureTab>("f0");
@@ -718,6 +728,7 @@ export default function App() {
         activeTask,
         {
           emotion: selectedEmotion,
+          celebrity: selectedCelebrity,
           mode: selectedGenderMode,
           midi_path: midiFile,
           pitch_contour: activeModule === "singing" && !midiFile ? [manualPitchHz(pitchValue)] : null,
@@ -842,6 +853,8 @@ export default function App() {
         result = await api.convertEmotion(inputPath, selectedEmotion, pitchValue, rateValue, energyValue, null);
       } else if (activeTask === "gender_age") {
         result = await api.convertGenderAge(inputPath, selectedGenderMode, null);
+      } else if (activeTask === "celebrity") {
+        result = await api.convertCelebrity(inputPath, selectedCelebrity, null);
       } else if (activeTask === "speaker_clone") {
         let refs = referenceFiles;
         if (refs.length === 0) {
@@ -971,7 +984,7 @@ export default function App() {
             ? `MIDI: ${basename(midiFile)}`
             : `Manuel hedef: ${Math.round(manualPitchHz(pitchValue))} Hz`
           : activeModule === "celebrity"
-            ? "Ünlü ses klonu aktif"
+            ? `Profil: ${celebrityLabels[selectedCelebrity]}`
             : referenceFiles.length
               ? `${referenceFiles.length} referans dosyası`
               : "Referans dosyası gerekli";
@@ -1136,7 +1149,7 @@ export default function App() {
                     : activeModule === "gender"
                       ? `${genderModeLabels[selectedGenderMode]} modu seçili ve dönüşüme hazır.`
                       : activeModule === "celebrity"
-                        ? "Ünlü ses klonu için bir kaynak dosya seç."
+                        ? `${celebrityLabels[selectedCelebrity]} profili secili ve donusume hazir.`
                         : singingMidiSuggested
                           ? midiFile
                             ? "Şarkı modu seçilen MIDI melodisini kullanacak."
@@ -1155,7 +1168,7 @@ export default function App() {
                 </div>
                 <div className={`selection-chip ${referenceFiles.length > 0 || activeModule === "gender" || activeModule === "emotion" || activeModule === "celebrity" ? "ok" : speakerReferencesRequired ? "warn" : ""}`}>
                   <span className="selection-label">
-                    {activeModule === "emotion" ? "Duygu" : activeModule === "gender" ? "Mod" : "Referanslar"}
+                    {activeModule === "emotion" ? "Duygu" : activeModule === "gender" ? "Mod" : activeModule === "celebrity" ? "Profil" : "Referanslar"}
                   </span>
                   <span className="selection-value">
                     {activeModule === "emotion"
@@ -1163,7 +1176,7 @@ export default function App() {
                       : activeModule === "gender"
                         ? genderModeLabels[selectedGenderMode]
                         : activeModule === "celebrity"
-                          ? "Otomatik"
+                          ? celebrityLabels[selectedCelebrity]
                           : referenceFiles.length > 0
                             ? `${referenceFiles.length} dosya`
                             : "Yok"}
@@ -1351,8 +1364,27 @@ export default function App() {
           ) : null}
 
           {activeModule === "celebrity" ? (
-            <div className="mini-note">
-              Ünlü ses klonu modülü aktif. Kaynak ses dosyasını seçip dönüştür.
+            <div>
+              <div className="mini-note">
+                Ünlü ses klonu modülü aktif. Kaynak ses dosyasını seçip dönüştür.
+              </div>
+              <div className="panel-title" style={{ marginTop: "10px" }}>Hedef Profil</div>
+              <div className="chip-row vertical">
+                {(Object.keys(celebrityLabels) as CelebrityKey[]).map((celebrity) => (
+                  <button
+                    className={`chip wide ${selectedCelebrity === celebrity ? "selected" : ""}`}
+                    key={celebrity}
+                    onClick={() => {
+                      setSelectedCelebrity(celebrity);
+                      addLog(`Celebrity profile: ${celebrityLabels[celebrity]}`);
+                    }}
+                    type="button"
+                  >
+                    {celebrityLabels[celebrity]}
+                  </button>
+                ))}
+              </div>
+              <div className="mini-note">{modeInfo}</div>
             </div>
           ) : null}
 

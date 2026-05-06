@@ -13,11 +13,12 @@ Kişi 3 değişiklikleri (Eren DÖNMEZ):
 
 from __future__ import annotations
 
-import librosa
 import numpy as np
 from scipy import signal
 import torch
 import torch.nn as nn
+
+from backend.audio.features import pitch_shift_audio
 
 
 # ---------------------------------------------------------------------------
@@ -313,7 +314,7 @@ def convert_gender_age(audio: np.ndarray, sample_rate: int, mode: str) -> np.nda
     x = np.asarray(audio, dtype=np.float32)
 
     # 1. Pitch shifting
-    pitched = librosa.effects.pitch_shift(y=x, sr=sample_rate, n_steps=preset["pitch_shift"])
+    pitched = pitch_shift_audio(x, sample_rate, preset["pitch_shift"])
 
     # 2. Spektral warp (kübik interpolasyon + phase coherence)
     with torch.no_grad():

@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-import librosa
 import numpy as np
 
-from backend.audio.features import stretch_to_length
+from backend.audio.features import pitch_shift_audio, stretch_to_length
 
 
 CELEBRITY_PROFILES: dict[str, dict[str, float]] = {
@@ -121,7 +120,7 @@ def convert_celebrity(audio: np.ndarray, sample_rate: int, celebrity: str) -> np
     if source.size == 0:
         return source
 
-    pitched = librosa.effects.pitch_shift(y=source, sr=sample_rate, n_steps=profile["pitch_shift"])
+    pitched = pitch_shift_audio(source, sample_rate, profile["pitch_shift"])
     pitched = stretch_to_length(np.asarray(pitched, dtype=np.float32), source.size)
 
     warped = _apply_formant_warp(pitched, profile["formant_shift"])

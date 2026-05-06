@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-import librosa
 import numpy as np
 
-from backend.audio.features import stretch_to_length
+from backend.audio.features import pitch_shift_audio, stretch_to_length, time_stretch_audio
 
 
 EMOTION_PROFILES: dict[str, dict[str, float]] = {
@@ -98,10 +97,10 @@ def convert_emotion(
     rate = float(profile["rate"] if rate_override is None else np.clip(rate_override, 0.6, 1.5))
     energy = float(1.0 if energy_override is None else np.clip(energy_override, 0.2, 2.0))
 
-    pitched = librosa.effects.pitch_shift(y=source, sr=sample_rate, n_steps=pitch_shift)
+    pitched = pitch_shift_audio(source, sample_rate, pitch_shift)
 
     if source.size >= 2048:
-        stretched = librosa.effects.time_stretch(y=np.asarray(pitched, dtype=np.float32), rate=rate)
+        stretched = time_stretch_audio(np.asarray(pitched, dtype=np.float32), rate=rate)
     else:
         stretched = np.asarray(pitched, dtype=np.float32)
 

@@ -115,6 +115,7 @@ class VoiceConversionPipeline:
         source = load_audio_mono(input_path, self.sample_rate)
         start = perf_counter()
         converted = convert_celebrity(source, self.sample_rate, celebrity)
+        converted = post_filter_voice(converted, self.sample_rate)
         elapsed = perf_counter() - start
         path = save_audio(output_path or default_output_path(input_path, f"celebrity_{celebrity}"), converted, self.sample_rate)
         metrics = self._build_metrics(source, converted, elapsed)
