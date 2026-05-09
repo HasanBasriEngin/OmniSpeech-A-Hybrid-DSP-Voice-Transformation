@@ -92,22 +92,26 @@ def load_rvc_registry(models_dir: str | os.PathLike[str] | None = None) -> dict[
     return registry
 
 
-def get_gender_age_rvc_config(mode: str, models_dir: str | os.PathLike[str] | None = None) -> RVCModelConfig | None:
+def get_rvc_config(
+    category: str,
+    key: str,
+    models_dir: str | os.PathLike[str] | None = None,
+) -> RVCModelConfig | None:
     models_root = resolve_models_dir(models_dir)
     registry = load_rvc_registry(models_root)
-    gender_age = registry.get("gender_age", {})
-    if not isinstance(gender_age, dict):
-        raise ValueError("RVC registry field 'gender_age' must be an object.")
+    category_entries = registry.get(category, {})
+    if not isinstance(category_entries, dict):
+        raise ValueError(f"RVC registry field '{category}' must be an object.")
 
-    raw_entry = gender_age.get(mode)
+    raw_entry = category_entries.get(key)
     if raw_entry is None:
         return None
     if not isinstance(raw_entry, dict):
-        raise ValueError(f"RVC registry entry for gender_age mode '{mode}' must be an object.")
+        raise ValueError(f"RVC registry entry for {category} key '{key}' must be an object.")
 
     model_id = raw_entry.get("model_id")
     if not isinstance(model_id, str) or not model_id.strip():
-        raise ValueError(f"RVC registry entry for gender_age mode '{mode}' needs a non-empty model_id.")
+        raise ValueError(f"RVC registry entry for {category} key '{key}' needs a non-empty model_id.")
     model_id = model_id.strip()
     if Path(model_id).name != model_id:
         raise ValueError(f"RVC model_id must be a local directory name, got: {model_id}")
@@ -116,7 +120,7 @@ def get_gender_age_rvc_config(mode: str, models_dir: str | os.PathLike[str] | No
     model_path = model_dir / f"{model_id}.pth"
     if not model_path.exists():
         raise FileNotFoundError(
-            f"RVC model configured for gender_age mode '{mode}' but file not found: {model_path}"
+            f"RVC model configured for {category} key '{key}' but file not found: {model_path}"
         )
 
     index_path = model_dir / f"{model_id}.index"
@@ -124,13 +128,17 @@ def get_gender_age_rvc_config(mode: str, models_dir: str | os.PathLike[str] | No
         index_path = None
 
     return RVCModelConfig(
-        mode=mode,
+        mode=key,
         model_id=model_id,
         model_path=model_path,
         index_path=index_path,
         pitch=int(raw_entry.get("pitch", 0)),
         index_rate=float(raw_entry.get("index_rate", 0.5)),
     )
+
+
+def get_gender_age_rvc_config(mode: str, models_dir: str | os.PathLike[str] | None = None) -> RVCModelConfig | None:
+    return get_rvc_config("gender_age", mode, models_dir=models_dir)
 
 
 def _load_rvc_inference_class() -> Any:
@@ -218,15 +226,16 @@ def _load_output_audio(path: Path, sample_rate: int) -> np.ndarray:
     return np.asarray(x, dtype=np.float32)
 
 
-def convert_gender_age_with_rvc(
+def convert_file_with_rvc(
     input_path: str,
-    mode: str,
+    category: str,
+    key: str,
     sample_rate: int,
     *,
     models_dir: str | os.PathLike[str] | None = None,
     device: str | None = None,
 ) -> RVCConversionResult | None:
-    config = get_gender_age_rvc_config(mode, models_dir=models_dir)
+    config = get_rvc_config(category, key, models_dir=models_dir)
     if config is None:
         return None
 
@@ -247,6 +256,24 @@ def convert_gender_age_with_rvc(
         _cleanup_temp_run_dir(temp_dir)
 
     return RVCConversionResult(audio=np.asarray(audio, dtype=np.float32), config=config)
+
+
+def convert_gender_age_with_rvc(
+    input_path: str,
+    mode: str,
+    sample_rate: int,
+    *,
+    models_dir: str | os.PathLike[str] | None = None,
+    device: str | None = None,
+) -> RVCConversionResult | None:
+    return convert_file_with_rvc(
+        input_path,
+        "gender_age",
+        mode,
+        sample_rate,
+        models_dir=models_dir,
+        device=device,
+    )
 
 
 def clear_rvc_engine_cache() -> None:

@@ -5,5 +5,12 @@
       "pitch": 0,
       "index_rate": 0.5
     }
+  },
+  "celebrity": {
+    "michael_jackson": {
+      "model_id": "licensed_profile_local",
+      "pitch": 0,
+      "index_rate": 0.5
+    }
   }
 }

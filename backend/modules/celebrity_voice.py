@@ -9,42 +9,42 @@ CELEBRITY_PROFILES: dict[str, dict[str, float]] = {
     "michael_jackson": {
         "pitch_shift": 4.2,
         "vibrato_rate": 5.8,
-        "vibrato_depth": 0.6,
-        "breathiness": 0.15,
+        "vibrato_depth": 0.34,
+        "breathiness": 0.055,
         "formant_shift": 1.12,
-        "brightness": 0.4,
+        "brightness": 0.28,
     },
     "morgan_freeman": {
         "pitch_shift": -3.5,
         "vibrato_rate": 0.0,
         "vibrato_depth": 0.0,
-        "breathiness": 0.08,
+        "breathiness": 0.025,
         "formant_shift": 0.88,
-        "brightness": -0.2,
+        "brightness": -0.16,
     },
     "adele": {
         "pitch_shift": 1.7,
         "vibrato_rate": 5.0,
-        "vibrato_depth": 0.25,
-        "breathiness": 0.05,
+        "vibrato_depth": 0.16,
+        "breathiness": 0.018,
         "formant_shift": 1.06,
-        "brightness": 0.15,
+        "brightness": 0.12,
     },
     "james_earl_jones": {
         "pitch_shift": -4.8,
         "vibrato_rate": 1.3,
-        "vibrato_depth": 0.12,
-        "breathiness": 0.04,
+        "vibrato_depth": 0.08,
+        "breathiness": 0.014,
         "formant_shift": 0.82,
-        "brightness": -0.28,
+        "brightness": -0.22,
     },
     "taylor_swift": {
         "pitch_shift": 2.8,
         "vibrato_rate": 5.4,
-        "vibrato_depth": 0.22,
-        "breathiness": 0.06,
+        "vibrato_depth": 0.14,
+        "breathiness": 0.02,
         "formant_shift": 1.08,
-        "brightness": 0.24,
+        "brightness": 0.16,
     },
 }
 
@@ -96,10 +96,10 @@ def _apply_breathiness(audio: np.ndarray, amount: float) -> np.ndarray:
         return x
 
     rng = np.random.default_rng(7)
-    noise = rng.normal(0.0, amount * 0.08, size=x.size).astype(np.float32)
+    noise = rng.normal(0.0, amount * 0.025, size=x.size).astype(np.float32)
     derivative = np.concatenate([[0.0], np.diff(x)]).astype(np.float32)
-    airy = 0.65 * derivative + 0.35 * noise
-    return (0.88 * x + 0.12 * airy).astype(np.float32)
+    airy = 0.72 * derivative + 0.28 * noise
+    return (0.95 * x + 0.05 * airy).astype(np.float32)
 
 
 def _peak_normalize(audio: np.ndarray, peak_target: float = 0.97) -> np.ndarray:
@@ -127,5 +127,5 @@ def convert_celebrity(audio: np.ndarray, sample_rate: int, celebrity: str) -> np
     vibrato = _apply_vibrato(warped, sample_rate, profile["vibrato_rate"], profile["vibrato_depth"])
     timbre = _apply_timbre(vibrato, profile["brightness"])
     airy = _apply_breathiness(timbre, profile["breathiness"])
-    output = _peak_normalize(np.tanh(airy * 1.08))
+    output = _peak_normalize(np.tanh(airy * 1.02), peak_target=0.93)
     return np.clip(output, -1.0, 1.0).astype(np.float32)

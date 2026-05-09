@@ -26,28 +26,28 @@ EMOTION_PROFILES: dict[str, dict[str, float]] = {
     "angry": {
         "pitch_shift": 5.2,
         "rate": 1.12,
-        "spectral_tilt": 4.4,
-        "prosody_depth": 0.40,
-        "drive": 2.05,
-        "target_rms": 0.205,
-        "attack": 1.35,
+        "spectral_tilt": 3.2,
+        "prosody_depth": 0.30,
+        "drive": 1.45,
+        "target_rms": 0.16,
+        "attack": 0.95,
         "breath": 0.01,
-        "jitter": 0.018,
+        "jitter": 0.010,
         "vibrato_rate": 0.0,
         "vibrato_depth": 0.0,
     },
     "excited": {
         "pitch_shift": 5.8,
         "rate": 1.18,
-        "spectral_tilt": 3.2,
-        "prosody_depth": 0.34,
-        "drive": 1.55,
-        "target_rms": 0.16,
-        "attack": 0.90,
-        "breath": 0.012,
-        "jitter": 0.035,
+        "spectral_tilt": 2.4,
+        "prosody_depth": 0.26,
+        "drive": 1.25,
+        "target_rms": 0.13,
+        "attack": 0.65,
+        "breath": 0.006,
+        "jitter": 0.018,
         "vibrato_rate": 5.0,
-        "vibrato_depth": 0.12,
+        "vibrato_depth": 0.08,
     },
     "whisper": {
         "pitch_shift": -1.0,
@@ -57,7 +57,7 @@ EMOTION_PROFILES: dict[str, dict[str, float]] = {
         "drive": 0.58,
         "target_rms": 0.045,
         "attack": 0.25,
-        "breath": 0.55,
+        "breath": 0.30,
         "jitter": 0.006,
         "vibrato_rate": 0.0,
         "vibrato_depth": 0.0,
@@ -285,14 +285,15 @@ def _apply_breathiness(audio: np.ndarray, amount: float, emotion: str) -> np.nda
         return x
 
     rng = np.random.default_rng(EMOTION_SEEDS[emotion] + 101)
-    noise = rng.normal(0.0, 0.08, x.size).astype(np.float32)
+    noise = rng.normal(0.0, 0.035, x.size).astype(np.float32)
     if noise.size > 8:
         smooth = np.convolve(noise, np.ones(9, dtype=np.float32) / 9.0, mode="same")
         noise = noise - smooth.astype(np.float32)
 
     derivative = np.concatenate([[0.0], np.diff(x)]).astype(np.float32)
-    airy = 0.62 * derivative + 0.38 * noise
-    return ((1.0 - amount) * x + amount * airy).astype(np.float32)
+    airy = 0.70 * derivative + 0.30 * noise
+    mix = float(np.clip(amount * 0.32, 0.0, 0.14))
+    return ((1.0 - mix) * x + mix * airy).astype(np.float32)
 
 
 def _match_target_rms(audio: np.ndarray, target_rms: float) -> np.ndarray:

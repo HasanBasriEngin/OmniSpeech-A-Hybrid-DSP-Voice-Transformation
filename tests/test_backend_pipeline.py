@@ -115,6 +115,64 @@ def test_gender_age_file_uses_rvc_lazily_when_registry_matches(monkeypatch: pyte
     ]
 
 
+def test_celebrity_file_uses_rvc_lazily_when_registry_matches(monkeypatch: pytest.MonkeyPatch):
+    tmp_dir = _workspace_tmp_dir("rvc_celebrity")
+    source = _sine(duration=0.25)
+    source_path = tmp_dir / "input.wav"
+    sf.write(str(source_path), source, 22050)
+
+    models_dir = tmp_dir / "rvc"
+    model_dir = models_dir / "licensed_profile_local"
+    model_dir.mkdir(parents=True)
+    (model_dir / "licensed_profile_local.pth").write_bytes(b"fake local rvc model")
+    (model_dir / "licensed_profile_local.index").write_bytes(b"fake local rvc index")
+    (models_dir / "registry.json").write_text(
+        json.dumps(
+            {
+                "celebrity": {
+                    "michael_jackson": {
+                        "model_id": "licensed_profile_local",
+                        "pitch": 1,
+                        "index_rate": 0.35,
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    calls: list[tuple[str, object]] = []
+
+    class FakeRVCInference:
+        def __init__(self, device: str = "cpu") -> None:
+            calls.append(("init", device))
+
+        def load_model(self, model_path: str, index_path: str = "") -> None:
+            calls.append(("load", (Path(model_path).name, Path(index_path).name)))
+
+        def set_params(self, **kwargs: object) -> None:
+            calls.append(("params", (kwargs.get("f0up_key"), kwargs.get("index_rate"))))
+
+        def infer_file(self, input_path: str, output_path: str) -> None:
+            calls.append(("infer", Path(output_path).name))
+            audio, _ = sf.read(input_path, dtype="float32")
+            sf.write(output_path, np.asarray(audio, dtype=np.float32) * 0.5, 22050)
+
+    monkeypatch.setattr(rvc_adapter, "_RVC_INFERENCE_CLASS", FakeRVCInference)
+    monkeypatch.setattr(rvc_adapter, "_RVC_INSTANCE_CACHE", {})
+
+    pipeline = VoiceConversionPipeline(sample_rate=22050, rvc_models_dir=str(models_dir), rvc_device="cpu")
+    result = pipeline.convert_celebrity_file(str(source_path), celebrity="michael_jackson")
+
+    assert result.metrics["rvc_engine"] == 1.0
+    assert calls == [
+        ("init", "cpu"),
+        ("load", ("licensed_profile_local.pth", "licensed_profile_local.index")),
+        ("params", (1, 0.35)),
+        ("infer", "rvc_output.wav"),
+    ]
+
+
 def test_gender_age_rvc_registry_missing_model_is_explicit():
     tmp_dir = _workspace_tmp_dir("rvc_missing")
     source_path = tmp_dir / "input.wav"

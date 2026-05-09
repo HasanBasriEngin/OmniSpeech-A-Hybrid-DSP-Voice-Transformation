@@ -1,0 +1,4 @@
+-r requirements-ai.txt
+
+# RVC dependencies are currently safest in a Python 3.10 environment on Windows.
+rvc-python==0.1.5

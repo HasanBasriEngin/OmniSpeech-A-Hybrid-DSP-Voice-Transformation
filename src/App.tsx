@@ -86,6 +86,37 @@ function normalizeError(err: unknown) {
   return String(err);
 }
 
+function delay(milliseconds: number) {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, milliseconds);
+  });
+}
+
+async function waitForBackendReady(timeoutMs = 10_000) {
+  const startedAt = Date.now();
+  const delays = [100, 150, 200, 300, 400, 500, 750, 1_000];
+  let attempt = 0;
+
+  while (Date.now() - startedAt < timeoutMs) {
+    try {
+      if (await api.backendHealth()) {
+        return true;
+      }
+    } catch {
+      // Backend may still be binding the port; keep polling until timeout.
+    }
+
+    await delay(delays[Math.min(attempt, delays.length - 1)]);
+    attempt += 1;
+  }
+
+  try {
+    return await api.backendHealth();
+  } catch {
+    return false;
+  }
+}
+
 function getAudioContextCtor() {
   return window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
 }
@@ -450,8 +481,9 @@ export default function App() {
     }
 
     try {
+      addLog("Backend hazirlaniyor...", true);
       await api.startBackend();
-      const healthy = await api.backendHealth();
+      const healthy = await waitForBackendReady();
       setBackendReady(healthy);
       addLog(healthy ? "Backend hazır" : "Backend sağlık kontrolü başarısız", !healthy);
       return healthy;

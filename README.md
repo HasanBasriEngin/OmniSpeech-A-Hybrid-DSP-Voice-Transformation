@@ -62,10 +62,17 @@ npm run tauri dev
 
 ### Opsiyonel AI kurulumu
 
-RVC tabanli offline gender/age donusumu, Pedalboard post-filter ve Parselmouth pitch shift icin:
+RVC tabanli offline gender/age ve lisansli profil donusumu, Pedalboard post-filter, Noisereduce spectral-gate temizleme ve Parselmouth pitch shift icin:
 
 ```bash
 pip install -r requirements-ai.txt
+```
+
+RVC paketleri Windows'ta Python 3.10 ortaminda daha sorunsuz kurulur:
+
+```bash
+py -3.10 -m venv .venv-rvc
+.venv-rvc\Scripts\python -m pip install -r requirements-rvc.txt
 ```
 
 RVC modelleri git'e eklenmez. Lisansli veya riza alinmis yerel modelleri `models/rvc/<model_id>/<model_id>.pth` duzeninde yerlestirin ve `models/rvc/registry.json` ile mode eslestirmesi yapin. Ornek sema `models/rvc/registry.example.json` icindedir.

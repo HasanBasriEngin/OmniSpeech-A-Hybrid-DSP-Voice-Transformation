@@ -17,7 +17,7 @@ from scipy import signal
 logger = logging.getLogger(__name__)
 
 _SPEECH_LOW_HZ = 55.0
-_SPEECH_HIGH_HZ = 10_500.0
+_SPEECH_HIGH_HZ = 8_800.0
 _DECLICK_BASE_THRESH = 0.08
 _DECLICK_WINDOW_MS = 2.5
 _SOFT_LIMIT_CEIL = 0.96
@@ -77,6 +77,36 @@ def _apply_pedalboard_post_filter(audio: np.ndarray, sample_rate: int) -> np.nda
         return None
 
     return _as_mono_float(processed)
+
+
+def _apply_noisereduce(audio: np.ndarray, sample_rate: int) -> np.ndarray | None:
+    """Run optional spectral-gate denoising for offline converted files."""
+    x = _as_mono_float(audio)
+    if x.size < 512 or sample_rate <= 0:
+        return x
+
+    try:
+        import noisereduce as nr
+    except Exception:
+        return None
+
+    try:
+        reduced = nr.reduce_noise(
+            y=x,
+            sr=sample_rate,
+            stationary=False,
+            prop_decrease=0.55,
+            time_constant_s=1.2,
+            freq_mask_smooth_hz=420,
+            time_mask_smooth_ms=70,
+        )
+    except TypeError:
+        reduced = nr.reduce_noise(y=x, sr=sample_rate)
+    except Exception as exc:  # pragma: no cover - optional dependency path
+        logger.warning("noisereduce post-filter failed; keeping previous audio: %s", exc)
+        return None
+
+    return _as_mono_float(reduced)
 
 
 def _build_speech_band_sos(sample_rate: int) -> np.ndarray | None:
@@ -233,10 +263,16 @@ def apply_post_filter(
     deess: bool = True,
     knee_db: float = _DEFAULT_KNEE_DB,
     ceiling: float = _SOFT_LIMIT_CEIL,
+    use_noisereduce: bool = True,
     use_pedalboard: bool = True,
 ) -> np.ndarray:
     """Apply the shared offline post-processing chain."""
     x = _as_mono_float(audio)
+
+    if use_noisereduce:
+        denoised = _apply_noisereduce(x, sample_rate)
+        if denoised is not None:
+            x = denoised
 
     if use_pedalboard:
         pedalboard_filtered = _apply_pedalboard_post_filter(x, sample_rate)
@@ -267,7 +303,7 @@ def post_filter_voice(audio: np.ndarray, sample_rate: int, *, realtime: bool = F
         return x
 
     x = x - float(np.mean(x))
-    x = apply_post_filter(x, sample_rate, use_pedalboard=not realtime)
+    x = apply_post_filter(x, sample_rate, use_noisereduce=not realtime, use_pedalboard=not realtime)
 
     if not realtime:
         x = _fade_edges(x, sample_rate)

@@ -32,7 +32,7 @@ CONVERSION_PRESETS: dict[str, dict] = {
         "warp": 1.20,
         "brightness": 0.30,
         "warmth": -0.06,
-        "breath": 0.010,
+        "breath": 0.004,
         "chest_resonance": 0.0,   # Erkek rezonanssı katkısı yok
         "nasality": 0.0,           # Nazalizasyon yok
         "tremor_amount": 0.0,      # Titreme yok
@@ -43,7 +43,7 @@ CONVERSION_PRESETS: dict[str, dict] = {
         "warp": 0.80,
         "brightness": -0.25,
         "warmth": 0.40,
-        "breath": 0.005,
+        "breath": 0.002,
         "chest_resonance": 0.35,   # Göğüs rezonansı katkısı (yeni)
         "nasality": 0.0,
         "tremor_amount": 0.0,
@@ -54,7 +54,7 @@ CONVERSION_PRESETS: dict[str, dict] = {
         "warp": 1.36,
         "brightness": 0.42,
         "warmth": -0.18,
-        "breath": 0.006,
+        "breath": 0.002,
         "chest_resonance": 0.0,
         "nasality": 0.28,           # Nazalizasyon (yeni)
         "tremor_amount": 0.0,
@@ -65,7 +65,7 @@ CONVERSION_PRESETS: dict[str, dict] = {
         "warp": 0.88,
         "brightness": -0.32,
         "warmth": 0.22,
-        "breath": 0.048,            # Daha belirgin nefes (yeni)
+        "breath": 0.018,            # Daha belirgin nefes (yeni)
         "chest_resonance": 0.0,
         "nasality": 0.0,
         "tremor_amount": 0.075,     # Daha fazla tremor (yeni)
@@ -267,7 +267,7 @@ def _add_breath_and_tremor(
     # Nefes gürültüsü
     if amount > 0:
         rng = np.random.default_rng(42)
-        noise = rng.normal(0.0, amount, x.size).astype(np.float32)
+        noise = rng.normal(0.0, amount * 0.45, x.size).astype(np.float32)
         sos = signal.butter(2, 1800, btype="highpass", fs=sample_rate, output="sos")
         breath = signal.sosfilt(sos, noise).astype(np.float32)
         out = out + breath
@@ -275,7 +275,7 @@ def _add_breath_and_tremor(
     return out.astype(np.float32)
 
 
-def _peak_normalize(audio: np.ndarray, peak_target: float = 0.97) -> np.ndarray:
+def _peak_normalize(audio: np.ndarray, peak_target: float = 0.93) -> np.ndarray:
     """Peak normalizasyonu."""
     x = np.asarray(audio, dtype=np.float32)
     peak = float(np.max(np.abs(x))) if x.size else 0.0

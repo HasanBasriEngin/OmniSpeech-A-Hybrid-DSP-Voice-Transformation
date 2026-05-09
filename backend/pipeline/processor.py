@@ -12,7 +12,7 @@ from backend.config import SETTINGS
 from backend.modules.emotion import convert_emotion
 from backend.modules.gender_age import convert_gender_age
 from backend.modules.celebrity_voice import convert_celebrity
-from backend.modules.rvc_adapter import convert_gender_age_with_rvc
+from backend.modules.rvc_adapter import convert_file_with_rvc, convert_gender_age_with_rvc
 from backend.modules.singing import convert_to_singing
 from backend.modules.speaker_clone import clone_speaker
 
@@ -137,7 +137,20 @@ class VoiceConversionPipeline:
     def convert_celebrity_file(self, input_path: str, celebrity: str, output_path: str | None = None) -> PipelineResult:
         source = load_audio_mono(input_path, self.sample_rate)
         start = perf_counter()
-        converted = convert_celebrity(source, self.sample_rate, celebrity)
+        rvc_result = convert_file_with_rvc(
+            input_path,
+            "celebrity",
+            celebrity,
+            self.sample_rate,
+            models_dir=self.rvc_models_dir,
+            device=self.rvc_device,
+        )
+        if rvc_result is None:
+            converted = convert_celebrity(source, self.sample_rate, celebrity)
+            rvc_engine = 0.0
+        else:
+            converted = rvc_result.audio
+            rvc_engine = 1.0
         converted = post_filter_voice(converted, self.sample_rate)
         elapsed = perf_counter() - start
         path = save_audio(output_path or default_output_path(input_path, f"celebrity_{celebrity}"), converted, self.sample_rate)
@@ -145,6 +158,7 @@ class VoiceConversionPipeline:
         metrics["celebrity_profile"] = float(
             sorted(["adele", "james_earl_jones", "michael_jackson", "morgan_freeman", "taylor_swift"]).index(celebrity)
         )
+        metrics["rvc_engine"] = rvc_engine
         return PipelineResult(output_path=path, metrics=metrics)
 
     def process_live_chunk(self, chunk: np.ndarray, task: str, options: dict[str, object]) -> np.ndarray:
