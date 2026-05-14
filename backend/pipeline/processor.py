@@ -1,20 +1,31 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
+from pathlib import Path
 from time import perf_counter
+from uuid import uuid4
 
 import numpy as np
 
 from backend.audio.filtering import post_filter_voice
 from backend.audio.features import extract_pitch_contour
 from backend.audio.io import default_output_path, load_audio_mono, save_audio
+from backend.audio.spectrogram_image import SpectrogramImageResult, preprocess_spectrogram_for_model
 from backend.config import SETTINGS
 from backend.modules.emotion import convert_emotion
 from backend.modules.gender_age import convert_gender_age
 from backend.modules.celebrity_voice import convert_celebrity
-from backend.modules.rvc_adapter import convert_file_with_rvc, convert_gender_age_with_rvc
+from backend.modules.rvc_adapter import (
+    convert_file_with_rvc,
+    convert_gender_age_with_rvc,
+    get_gender_age_rvc_config,
+    get_rvc_config,
+)
 from backend.modules.singing import convert_to_singing
 from backend.modules.speaker_clone import clone_speaker
+
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
 @dataclass
@@ -72,23 +83,37 @@ class VoiceConversionPipeline:
     def convert_gender_age_file(self, input_path: str, mode: str, output_path: str | None = None) -> PipelineResult:
         source = load_audio_mono(input_path, self.sample_rate)
         start = perf_counter()
-        rvc_result = convert_gender_age_with_rvc(
-            input_path,
-            mode,
-            self.sample_rate,
-            models_dir=self.rvc_models_dir,
-            device=self.rvc_device,
-        )
-        if rvc_result is None:
-            converted = convert_gender_age(source, self.sample_rate, mode)
-            rvc_engine = 0.0
-        else:
-            converted = rvc_result.audio
-            rvc_engine = 1.0
-        converted = post_filter_voice(converted, self.sample_rate)
-        elapsed = perf_counter() - start
+        prepared = preprocess_spectrogram_for_model(source, self.sample_rate)
+        temp_dir: Path | None = None
+        try:
+            rvc_input_path = input_path
+            if (
+                get_gender_age_rvc_config(mode, models_dir=self.rvc_models_dir) is not None
+                and prepared.metrics.get("opencv_spectrogram_applied", 0.0) > 0.0
+            ):
+                rvc_input_path, temp_dir = self._write_ai_preprocessed_input(prepared, self.sample_rate, "gender_age")
+
+            rvc_result = convert_gender_age_with_rvc(
+                rvc_input_path,
+                mode,
+                self.sample_rate,
+                models_dir=self.rvc_models_dir,
+                device=self.rvc_device,
+            )
+            if rvc_result is None:
+                converted = convert_gender_age(prepared.audio, self.sample_rate, mode)
+                rvc_engine = 0.0
+            else:
+                converted = rvc_result.audio
+                rvc_engine = 1.0
+            converted = post_filter_voice(converted, self.sample_rate)
+            elapsed = perf_counter() - start
+        finally:
+            if temp_dir is not None:
+                self._cleanup_temp_dir(temp_dir)
         path = save_audio(output_path or default_output_path(input_path, mode), converted, self.sample_rate)
         metrics = self._build_metrics(source, converted, elapsed)
+        metrics.update(prepared.metrics)
         metrics["rvc_engine"] = rvc_engine
         return PipelineResult(output_path=path, metrics=metrics)
 
@@ -137,24 +162,38 @@ class VoiceConversionPipeline:
     def convert_celebrity_file(self, input_path: str, celebrity: str, output_path: str | None = None) -> PipelineResult:
         source = load_audio_mono(input_path, self.sample_rate)
         start = perf_counter()
-        rvc_result = convert_file_with_rvc(
-            input_path,
-            "celebrity",
-            celebrity,
-            self.sample_rate,
-            models_dir=self.rvc_models_dir,
-            device=self.rvc_device,
-        )
-        if rvc_result is None:
-            converted = convert_celebrity(source, self.sample_rate, celebrity)
-            rvc_engine = 0.0
-        else:
-            converted = rvc_result.audio
-            rvc_engine = 1.0
-        converted = post_filter_voice(converted, self.sample_rate)
-        elapsed = perf_counter() - start
+        prepared = preprocess_spectrogram_for_model(source, self.sample_rate)
+        temp_dir: Path | None = None
+        try:
+            rvc_input_path = input_path
+            if (
+                get_rvc_config("celebrity", celebrity, models_dir=self.rvc_models_dir) is not None
+                and prepared.metrics.get("opencv_spectrogram_applied", 0.0) > 0.0
+            ):
+                rvc_input_path, temp_dir = self._write_ai_preprocessed_input(prepared, self.sample_rate, "celebrity")
+
+            rvc_result = convert_file_with_rvc(
+                rvc_input_path,
+                "celebrity",
+                celebrity,
+                self.sample_rate,
+                models_dir=self.rvc_models_dir,
+                device=self.rvc_device,
+            )
+            if rvc_result is None:
+                converted = convert_celebrity(prepared.audio, self.sample_rate, celebrity)
+                rvc_engine = 0.0
+            else:
+                converted = rvc_result.audio
+                rvc_engine = 1.0
+            converted = post_filter_voice(converted, self.sample_rate)
+            elapsed = perf_counter() - start
+        finally:
+            if temp_dir is not None:
+                self._cleanup_temp_dir(temp_dir)
         path = save_audio(output_path or default_output_path(input_path, f"celebrity_{celebrity}"), converted, self.sample_rate)
         metrics = self._build_metrics(source, converted, elapsed)
+        metrics.update(prepared.metrics)
         metrics["celebrity_profile"] = float(
             sorted(["adele", "james_earl_jones", "michael_jackson", "morgan_freeman", "taylor_swift"]).index(celebrity)
         )
@@ -230,3 +269,36 @@ class VoiceConversionPipeline:
             "output_median_f0": float(round(converted_pitch, 3)),
             "snr_estimate_db": float(round(snr, 3)),
         }
+
+    @staticmethod
+    def _resolve_ai_preprocess_temp_root() -> Path:
+        raw_dir = os.getenv("OMNISPEECH_AI_PREPROCESS_TEMP_DIR", ".tmp/ai_preprocess")
+        root = Path(raw_dir).expanduser()
+        if not root.is_absolute():
+            root = _PROJECT_ROOT / root
+        root.mkdir(parents=True, exist_ok=True)
+        return root.resolve()
+
+    @classmethod
+    def _write_ai_preprocessed_input(
+        cls,
+        prepared: SpectrogramImageResult,
+        sample_rate: int,
+        prefix: str,
+    ) -> tuple[str, Path]:
+        temp_root = cls._resolve_ai_preprocess_temp_root()
+        run_dir = temp_root / f"omnispeech-{prefix}-{uuid4().hex}"
+        run_dir.mkdir(parents=True, exist_ok=False)
+        path = run_dir / "ai_input.wav"
+        save_audio(str(path), prepared.audio, sample_rate)
+        return str(path), run_dir
+
+    @staticmethod
+    def _cleanup_temp_dir(run_dir: Path) -> None:
+        try:
+            for child in run_dir.iterdir():
+                if child.is_file():
+                    child.unlink()
+            run_dir.rmdir()
+        except OSError:
+            pass

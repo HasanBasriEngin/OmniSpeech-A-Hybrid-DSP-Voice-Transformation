@@ -68,6 +68,8 @@ RVC tabanli offline gender/age ve lisansli profil donusumu, Pedalboard post-filt
 pip install -r requirements-ai.txt
 ```
 
+Bu kurulum OpenCV spektrogram on-isleme katmanini da acar. Backend, sesi Librosa ile STFT spektrogramina cevirir, spektrogrami OpenCV ile 256x256 goruntu gibi resize/blur/normalize eder, orijinal faz ile tekrar waveform'a donusturur ve RVC/DSP donusumune bu hazirlanmis sesi verir. `cv2` yoksa pipeline calismaya devam eder ve metriklerde `opencv_spectrogram_applied=0` gorunur.
+
 RVC paketleri Windows'ta Python 3.10 ortaminda daha sorunsuz kurulur:
 
 ```bash
@@ -76,6 +78,18 @@ py -3.10 -m venv .venv-rvc
 ```
 
 RVC modelleri git'e eklenmez. Lisansli veya riza alinmis yerel modelleri `models/rvc/<model_id>/<model_id>.pth` duzeninde yerlestirin ve `models/rvc/registry.json` ile mode eslestirmesi yapin. Ornek sema `models/rvc/registry.example.json` icindedir.
+
+### Hibrit AI/DSP Pipeline Plani
+
+Bu mimari uygulanabilir ve repo su an RVC-oncelikli sekilde hazirdir:
+
+1. Girdi ses dosyasi Librosa/SoundFile ile mono float32 olarak yuklenir.
+2. Duygu modulu Parselmouth varsa Praat pitch manipulation kullanir; yoksa DSP tabanli PSOLA/FFT fallback'e iner.
+3. Gender-age ve lisansli profil yollarinda spektrogram OpenCV ile goruntu gibi islenir.
+4. `models/rvc/registry.json` icinde uygun model varsa RVC inference calisir; yoksa ayni hazirlanmis ses hafif DSP fallback ile islenir.
+5. Cikis post-filter, de-click, de-ess ve limiter zincirinden gecirilip WAV olarak kaydedilir.
+
+FreeVC zero-shot entegrasyonu sonraki adim olarak ayni adapter desenine eklenebilir. RVC pratikte daha dogrudan uygulanabilir, cunku mevcut backend zaten yerel `.pth` model registry'si ile calisir.
 
 ## Gelistirme Ortam Degiskenleri
 
@@ -88,6 +102,7 @@ RVC modelleri git'e eklenmez. Lisansli veya riza alinmis yerel modelleri `models
 | `OMNISPEECH_RVC_MODELS_DIR=models/rvc` | Yerel RVC registry ve model kok dizini |
 | `OMNISPEECH_RVC_DEVICE=cpu` | RVC inference cihaz secimi |
 | `OMNISPEECH_RVC_TEMP_DIR=.tmp/rvc` | RVC gecici WAV calisma dizini |
+| `OMNISPEECH_AI_PREPROCESS_TEMP_DIR=.tmp/ai_preprocess` | RVC oncesi OpenCV spektrogram on-isleme gecici dizini |
 
 ## Ozellikler
 

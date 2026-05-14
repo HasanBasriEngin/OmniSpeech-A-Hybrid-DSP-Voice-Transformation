@@ -3,3 +3,4 @@
 pedalboard==0.9.22
 praat-parselmouth==0.4.7
 noisereduce>=3.0.0
+opencv-python-headless>=4.9
