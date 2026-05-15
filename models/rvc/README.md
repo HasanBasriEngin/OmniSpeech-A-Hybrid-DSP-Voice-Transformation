@@ -2,6 +2,11 @@
 
 Put only licensed or consent-based local RVC models here.
 
+The Hugging Face importer downloads RVC core assets to `models/hf/rvc-core-v2`.
+Those files help with RVC tooling, but they are not a target voice. A usable RVC
+conversion still needs a local target-speaker `.pth` model and optional `.index`
+file that you have rights or consent to use.
+
 Expected layout:
 
 ```text

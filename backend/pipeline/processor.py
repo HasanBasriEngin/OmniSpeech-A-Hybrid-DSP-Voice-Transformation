@@ -22,6 +22,7 @@ from backend.modules.rvc_adapter import (
     get_gender_age_rvc_config,
     get_rvc_config,
 )
+from backend.modules.freevc_adapter import convert_file_with_freevc
 from backend.modules.singing import convert_to_singing
 from backend.modules.speaker_clone import clone_speaker
 
@@ -43,10 +44,14 @@ class VoiceConversionPipeline:
         *,
         rvc_models_dir: str | None = None,
         rvc_device: str | None = None,
+        freevc_assets_dir: str | None = None,
+        freevc_device: str | None = None,
     ) -> None:
         self.sample_rate = sample_rate
         self.rvc_models_dir = rvc_models_dir or SETTINGS.rvc_models_dir
         self.rvc_device = rvc_device or SETTINGS.rvc_device
+        self.freevc_assets_dir = freevc_assets_dir or SETTINGS.freevc_assets_dir
+        self.freevc_device = freevc_device or SETTINGS.freevc_device
 
     def convert_emotion_file(
         self,
@@ -124,16 +129,32 @@ class VoiceConversionPipeline:
         output_path: str | None = None,
     ) -> PipelineResult:
         source = load_audio_mono(input_path, self.sample_rate)
-        references = [load_audio_mono(path, self.sample_rate) for path in reference_paths]
 
         start = perf_counter()
-        converted = clone_speaker(source, self.sample_rate, references)
+        freevc_result = None
+        if reference_paths:
+            freevc_result = convert_file_with_freevc(
+                input_path,
+                reference_paths[0],
+                self.sample_rate,
+                assets_dir=self.freevc_assets_dir,
+                device=self.freevc_device,
+            )
+
+        if freevc_result is None:
+            references = [load_audio_mono(path, self.sample_rate) for path in reference_paths]
+            converted = clone_speaker(source, self.sample_rate, references)
+            freevc_engine = 0.0
+        else:
+            converted = freevc_result.audio
+            freevc_engine = 1.0
         converted = post_filter_voice(converted, self.sample_rate)
         elapsed = perf_counter() - start
 
         path = save_audio(output_path or default_output_path(input_path, "speaker_clone"), converted, self.sample_rate)
         metrics = self._build_metrics(source, converted, elapsed)
         metrics["reference_count"] = float(len(reference_paths))
+        metrics["freevc_engine"] = freevc_engine
         return PipelineResult(output_path=path, metrics=metrics)
 
     def convert_singing_file(

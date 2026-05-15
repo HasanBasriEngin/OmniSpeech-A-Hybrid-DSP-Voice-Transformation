@@ -14,6 +14,8 @@ from backend.audio.io import normalize_audio
 from backend.audio.spectrogram_image import SpectrogramImageResult, preprocess_spectrogram_for_model
 from backend.modules import emotion as emotion_module
 from backend.modules import rvc_adapter
+from backend.modules.freevc_adapter import FreeVCConversionResult, FreeVCModelConfig, resolve_wavlm_model
+from backend.modules.hf_voice_assets import import_hf_voice_assets, plan_hf_voice_asset_imports
 from backend.pipeline import processor as processor_module
 from backend.pipeline.processor import VoiceConversionPipeline
 from backend.services.live_session import LiveSessionManager
@@ -45,6 +47,44 @@ def test_gender_age_file_conversion():
     assert "opencv_spectrogram_applied" in result.metrics
 
 
+def test_hf_voice_asset_plan_selects_rvc_freevc_and_wavlm():
+    tmp_dir = _workspace_tmp_dir("hf_plan")
+    plan = plan_hf_voice_asset_imports(["all"], local_root=tmp_dir)
+    names = {item.name for item in plan}
+
+    assert {"rvc-core-v2-48k", "freevc-24-one-shot", "wavlm-large-content"} <= names
+    assert all(str(tmp_dir.resolve()) in item.local_dir for item in plan)
+
+
+def test_hf_voice_asset_import_writes_manifest_without_network():
+    tmp_dir = _workspace_tmp_dir("hf_import")
+    calls: list[tuple[str, str, str]] = []
+
+    def fake_snapshot_download(**kwargs: object) -> str:
+        repo_id = str(kwargs["repo_id"])
+        local_dir = Path(str(kwargs["local_dir"]))
+        local_dir.mkdir(parents=True, exist_ok=True)
+        (local_dir / "download.marker").write_text(repo_id, encoding="utf-8")
+        calls.append((repo_id, str(kwargs["repo_type"]), str(kwargs["revision"])))
+        return str(local_dir)
+
+    manifest = import_hf_voice_assets(
+        ["freevc"],
+        local_root=tmp_dir,
+        snapshot_download_fn=fake_snapshot_download,
+    )
+
+    assert calls == [("OlaWod/FreeVC", "space", "main")]
+    manifest_path = Path(str(manifest["manifest_path"]))
+    assert manifest_path.exists()
+    assert manifest["assets"][0]["name"] == "freevc-24-one-shot"
+
+
+def test_wavlm_model_resolver_preserves_hugging_face_ids():
+    assert resolve_wavlm_model("microsoft/wavlm-large") == "microsoft/wavlm-large"
+    assert Path(resolve_wavlm_model("models/hf/wavlm-large")).name == "wavlm-large"
+
+
 def test_emotion_file_conversion():
     source = _sine()
     tmp_dir = Path(".tmp") / "tests"
@@ -57,6 +97,46 @@ def test_emotion_file_conversion():
 
     assert result.output_path.endswith(".wav")
     assert result.metrics["processing_seconds"] >= 0.0
+
+
+def test_speaker_clone_file_prefers_freevc_when_assets_are_available(monkeypatch: pytest.MonkeyPatch):
+    tmp_dir = _workspace_tmp_dir("freevc_speaker")
+    source = _sine(duration=0.25)
+    reference = _sine(duration=0.25) * 0.5
+    source_path = tmp_dir / "input.wav"
+    reference_path = tmp_dir / "reference.wav"
+    sf.write(str(source_path), source, 22050)
+    sf.write(str(reference_path), reference, 22050)
+
+    def fake_convert_file_with_freevc(
+        input_path: str,
+        reference_path_arg: str,
+        sample_rate: int,
+        **kwargs: object,
+    ) -> FreeVCConversionResult:
+        assert Path(input_path) == source_path
+        assert Path(reference_path_arg) == reference_path
+        assert sample_rate == 22050
+        assert kwargs["assets_dir"] == "models/hf/freevc-24"
+        return FreeVCConversionResult(
+            audio=np.asarray(source * 0.25, dtype=np.float32),
+            config=FreeVCModelConfig(
+                model_id="freevc-24-one-shot",
+                assets_dir=tmp_dir,
+                checkpoint_path=tmp_dir / "freevc-24.pth",
+                config_path=tmp_dir / "freevc-24.json",
+                speaker_encoder_path=tmp_dir / "speaker.pt",
+                wavlm_model="microsoft/wavlm-large",
+            ),
+        )
+
+    monkeypatch.setattr(processor_module, "convert_file_with_freevc", fake_convert_file_with_freevc)
+
+    pipeline = VoiceConversionPipeline(sample_rate=22050)
+    result = pipeline.convert_speaker_clone_file(str(source_path), [str(reference_path)])
+
+    assert result.metrics["freevc_engine"] == 1.0
+    assert result.metrics["reference_count"] == 1.0
 
 
 def test_gender_age_file_uses_rvc_lazily_when_registry_matches(monkeypatch: pytest.MonkeyPatch):

@@ -36,3 +36,6 @@ models/rvc/**/*.pt
 models/rvc/**/*.onnx
 models/rvc/**/*.index
 models/rvc/**/*.zip
+models/rvc/**/*.safetensors
+models/hf/*
+!models/hf/README.md

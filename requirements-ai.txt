@@ -4,3 +4,6 @@ pedalboard==0.9.22
 praat-parselmouth==0.4.7
 noisereduce>=3.0.0
 opencv-python-headless>=4.9
+huggingface_hub>=0.24
+transformers>=4.40
+webrtcvad>=2.0.10

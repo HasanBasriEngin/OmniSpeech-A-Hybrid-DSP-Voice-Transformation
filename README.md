@@ -62,7 +62,9 @@ npm run tauri dev
 
 ### Opsiyonel AI kurulumu
 
-RVC tabanli offline gender/age ve lisansli profil donusumu, Pedalboard post-filter, Noisereduce spectral-gate temizleme ve Parselmouth pitch shift icin:
+RVC tabanli offline gender/age, FreeVC tabanli referans sesli konusmaci klonu,
+Pedalboard post-filter, Noisereduce spectral-gate temizleme ve Parselmouth pitch
+shift icin:
 
 ```bash
 pip install -r requirements-ai.txt
@@ -77,7 +79,36 @@ py -3.10 -m venv .venv-rvc
 .venv-rvc\Scripts\python -m pip install -r requirements-rvc.txt
 ```
 
+### Hugging Face RVC/FreeVC import
+
+OmniSpeech, Hugging Face'ten secilmis RVC ve FreeVC varliklarini yerel
+`models/hf/` altina indirebilir:
+
+```bash
+# Indirmeden once secilecek repo ve dosyalari goster
+python -m backend.tools.import_hf_voice_assets --bundle all --dry-run
+
+# RVC core, FreeVC 24 kHz ve WavLM Large varliklarini indir
+python -m backend.tools.import_hf_voice_assets --bundle all
+```
+
+Secilen varsayilanlar:
+- RVC icin `AEmotionStudio/rvc-models`: MIT lisansli RVC v2 core varliklari,
+  48 kHz F0/RMVPE yolu.
+- FreeVC icin `OlaWod/FreeVC`: FreeVC 24 kHz one-shot checkpoint ve calisma
+  dosyalari.
+- FreeVC content encoder icin `microsoft/wavlm-large`: Space'in kullandigi
+  WavLM Large encoder.
+
+FreeVC varliklari mevcutsa `speaker_clone` dosya donusumu, ilk referans sesini
+hedef stil olarak kullanip FreeVC'yi dener; model eksikse mevcut hafif DSP/ML
+fallback aynen calisir.
+
 RVC modelleri git'e eklenmez. Lisansli veya riza alinmis yerel modelleri `models/rvc/<model_id>/<model_id>.pth` duzeninde yerlestirin ve `models/rvc/registry.json` ile mode eslestirmesi yapin. Ornek sema `models/rvc/registry.example.json` icindedir.
+Hugging Face uzerindeki hazir RVC hedef ses modelleri kalite ve izin acisindan
+cok degiskendir; bu yuzden importer varsayilan olarak yalnizca core varliklari
+indirir. Hedef ses icin sadece lisansli veya riza alinmis `.pth/.index`
+modellerini kullanin.
 
 ### Hibrit AI/DSP Pipeline Plani
 
@@ -89,7 +120,8 @@ Bu mimari uygulanabilir ve repo su an RVC-oncelikli sekilde hazirdir:
 4. `models/rvc/registry.json` icinde uygun model varsa RVC inference calisir; yoksa ayni hazirlanmis ses hafif DSP fallback ile islenir.
 5. Cikis post-filter, de-click, de-ess ve limiter zincirinden gecirilip WAV olarak kaydedilir.
 
-FreeVC zero-shot entegrasyonu sonraki adim olarak ayni adapter desenine eklenebilir. RVC pratikte daha dogrudan uygulanabilir, cunku mevcut backend zaten yerel `.pth` model registry'si ile calisir.
+FreeVC 24 kHz entegrasyonu speaker-clone akisi icin opsiyonel olarak eklidir.
+RVC ise hedef sese ozel yerel `.pth/.index` model registry'si ile calisir.
 
 ## Gelistirme Ortam Degiskenleri
 
@@ -102,6 +134,10 @@ FreeVC zero-shot entegrasyonu sonraki adim olarak ayni adapter desenine eklenebi
 | `OMNISPEECH_RVC_MODELS_DIR=models/rvc` | Yerel RVC registry ve model kok dizini |
 | `OMNISPEECH_RVC_DEVICE=cpu` | RVC inference cihaz secimi |
 | `OMNISPEECH_RVC_TEMP_DIR=.tmp/rvc` | RVC gecici WAV calisma dizini |
+| `OMNISPEECH_FREEVC_ASSETS_DIR=models/hf/freevc-24` | Hugging Face'ten import edilen FreeVC Space dosyalari |
+| `OMNISPEECH_FREEVC_DEVICE=cpu` | FreeVC inference cihaz secimi |
+| `OMNISPEECH_WAVLM_MODEL=models/hf/wavlm-large` | FreeVC WavLM encoder yolu veya HF model id |
+| `OMNISPEECH_FREEVC_TEMP_DIR=.tmp/freevc` | FreeVC gecici WAV calisma dizini |
 | `OMNISPEECH_AI_PREPROCESS_TEMP_DIR=.tmp/ai_preprocess` | RVC oncesi OpenCV spektrogram on-isleme gecici dizini |
 
 ## Ozellikler
