@@ -3,14 +3,22 @@
     "male_to_female": {
       "model_id": "female_local",
       "pitch": 0,
-      "index_rate": 0.5
+      "index_rate": 0.5,
+      "consent_required": true,
+      "consent_owner": "authorized_local_voice",
+      "license": "private-consent",
+      "allow_any_source": false
     }
   },
   "celebrity": {
     "michael_jackson": {
       "model_id": "licensed_profile_local",
       "pitch": 0,
-      "index_rate": 0.5
+      "index_rate": 0.5,
+      "consent_required": true,
+      "consent_owner": "licensed_profile_owner",
+      "license": "private-consent",
+      "allow_any_source": false
     }
   }
 }

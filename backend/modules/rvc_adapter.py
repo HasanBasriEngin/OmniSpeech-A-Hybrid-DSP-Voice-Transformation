@@ -29,6 +29,10 @@ class RVCModelConfig:
     index_path: Path | None
     pitch: int
     index_rate: float
+    consent_required: bool
+    consent_owner: str
+    license: str
+    allow_any_source: bool
 
 
 @dataclass(frozen=True)
@@ -92,6 +96,22 @@ def load_rvc_registry(models_dir: str | os.PathLike[str] | None = None) -> dict[
     return registry
 
 
+def _coerce_registry_bool(value: Any, *, field_name: str, default: bool) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    raise ValueError(f"RVC registry field '{field_name}' must be a boolean.")
+
+
+def _coerce_registry_string(value: Any, *, field_name: str, default: str) -> str:
+    if value is None:
+        return default
+    if isinstance(value, str):
+        return value
+    raise ValueError(f"RVC registry field '{field_name}' must be a string.")
+
+
 def get_rvc_config(
     category: str,
     key: str,
@@ -134,6 +154,26 @@ def get_rvc_config(
         index_path=index_path,
         pitch=int(raw_entry.get("pitch", 0)),
         index_rate=float(raw_entry.get("index_rate", 0.5)),
+        consent_required=_coerce_registry_bool(
+            raw_entry.get("consent_required"),
+            field_name=f"{category}.{key}.consent_required",
+            default=True,
+        ),
+        consent_owner=_coerce_registry_string(
+            raw_entry.get("consent_owner"),
+            field_name=f"{category}.{key}.consent_owner",
+            default="",
+        ),
+        license=_coerce_registry_string(
+            raw_entry.get("license"),
+            field_name=f"{category}.{key}.license",
+            default="unknown",
+        ),
+        allow_any_source=_coerce_registry_bool(
+            raw_entry.get("allow_any_source"),
+            field_name=f"{category}.{key}.allow_any_source",
+            default=False,
+        ),
     )
 
 
