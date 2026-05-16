@@ -10,9 +10,56 @@ class HealthResponse(BaseModel):
     backend: str
 
 
+# ---------------------------------------------------------------------------
+# Engine metadata — returned alongside every conversion result so the UI
+# can display which engines were active and which fell back.
+# ---------------------------------------------------------------------------
+
+class EngineStatus(BaseModel):
+    """Motor durum bilgisi — her dönüşüm sonucunda UI'a iletilir."""
+    freevc_engine: float = Field(
+        default=0.0,
+        description="1.0 = FreeVC aktif olarak kullanıldı, 0.0 = fallback/pasif",
+        ge=0.0,
+        le=1.0,
+    )
+    rvc_engine: float = Field(
+        default=0.0,
+        description="1.0 = RVC aktif olarak kullanıldı, 0.0 = fallback/pasif",
+        ge=0.0,
+        le=1.0,
+    )
+    opencv_spectrogram_applied: float = Field(
+        default=0.0,
+        description="1.0 = OpenCV spektrogram ön-işleme uygulandı, 0.0 = atlandı",
+        ge=0.0,
+        le=1.0,
+    )
+    fallback_used: bool = Field(
+        default=False,
+        description="Herhangi bir motor fallback'e düştüyse True",
+    )
+
+
+class ModelMetadata(BaseModel):
+    """Çıktıda kullanılan model hakkında lisans ve izin bilgisi."""
+    model_id: str | None = Field(default=None, description="Kullanılan modelin ID'si")
+    license: str | None = Field(default=None, description="Model lisansı (ör. 'private-consent', 'MIT')")
+    consent_owner: str | None = Field(
+        default=None,
+        description="Sesi izin verilen kişi (ör. 'authorized_local_voice')",
+    )
+    is_licensed_profile: bool = Field(
+        default=False,
+        description="Bu model izinli/lisanslı bir profil mi?",
+    )
+
+
 class ConversionResponse(BaseModel):
     output_path: str
     metrics: dict[str, float] = Field(default_factory=dict)
+    engine_status: EngineStatus = Field(default_factory=EngineStatus)
+    model_metadata: ModelMetadata = Field(default_factory=ModelMetadata)
 
 
 class EmotionRequest(BaseModel):
@@ -43,6 +90,37 @@ class SingingRequest(BaseModel):
     output_path: str | None = None
 
 
+# ---------------------------------------------------------------------------
+# Licensed Profile — replaces the old CelebrityRequest.
+# Requires explicit consent before the conversion pipeline starts.
+# External API-based voice fetching is strictly forbidden.
+# ---------------------------------------------------------------------------
+
+class LicensedProfileRequest(BaseModel):
+    """
+    İzinli profil dönüşüm isteği.
+
+    Kural: Bu endpoint yalnızca yerel, izin alınmış ses profilleriyle çalışır.
+    Harici API ile ses çekimi, TTS veya cloud inference kesinlikle yasaktır.
+    """
+    input_path: str
+    profile_id: str = Field(
+        description=(
+            "models/rvc/registry.json içinde tanımlı, izinli profil ID'si. "
+            "Ünlü/üçüncü kişi sesi içeren profiller kabul edilmez."
+        )
+    )
+    consent_confirmed: bool = Field(
+        default=False,
+        description=(
+            "Kullanıcı 'Bu referans/model için gerekli izinlere sahibim' onayını verdiyse True. "
+            "False ise dönüşüm başlamaz."
+        ),
+    )
+    output_path: str | None = None
+
+
+# Backward-compat alias — eski /celebrity endpoint'ini besleyen kodlar kırılmasın.
 class CelebrityRequest(BaseModel):
     input_path: str
     celebrity: Literal["michael_jackson", "morgan_freeman", "adele", "james_earl_jones", "taylor_swift"]
@@ -54,6 +132,10 @@ class LiveSessionStartRequest(BaseModel):
     options: dict[str, object] = Field(default_factory=dict)
     route_to_virtual_mic: bool = False
     virtual_mic_device: str | None = None
+    consent_confirmed: bool = Field(
+        default=False,
+        description="İzinli profil/RVC akışı kullanılıyorsa consent onayı gereklidir.",
+    )
 
 
 class LiveSessionStartResponse(BaseModel):

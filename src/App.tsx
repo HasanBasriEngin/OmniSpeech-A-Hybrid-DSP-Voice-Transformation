@@ -2,6 +2,10 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 import { useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 
 import { api } from "@/lib/tauri";
+import { EngineStatusPanel } from "@/components/EngineStatusPanel";
+import { ConsentGate } from "@/components/ConsentGate";
+import type { EngineStatus, ModelMetadata } from "@/types/omni";
+import { DEFAULT_ENGINE_STATUS } from "@/types/omni";
 
 type ModuleKey = "emotion" | "gender" | "speaker" | "singing" | "celebrity";
 type EmotionKey = "sad" | "angry" | "excited" | "whisper" | "calm";
@@ -18,6 +22,8 @@ type LogEntry = {
 };
 
 type ConversionPayload = {
+  engine_status?: EngineStatus;
+  model_metadata?: ModelMetadata;
   outputPath?: string;
   output_path?: string;
   metrics?: Record<string, number>;
@@ -395,6 +401,9 @@ export default function App() {
   const [originalWaveform, setOriginalWaveform] = useState<WaveformData | null>(null);
   const [processedWaveform, setProcessedWaveform] = useState<WaveformData | null>(null);
   const [metrics, setMetrics] = useState<Record<string, number>>({});
+  const [engineStatus, setEngineStatus] = useState<EngineStatus>(DEFAULT_ENGINE_STATUS);
+  const [modelMetadata, setModelMetadata] = useState<ModelMetadata>({ model_id: null, license: null, consent_owner: null, is_licensed_profile: false });
+  const [consentConfirmed, setConsentConfirmed] = useState(false);
 
   const [pitchValue, setPitchValue] = useState(1.5);
   const [rateValue, setRateValue] = useState(1.15);
@@ -909,6 +918,8 @@ export default function App() {
       setOutputPath(nextOutputPath);
       loadPlaybackAudio(nextOutputPath);
       setMetrics(result.metrics ?? {});
+      if (result.engine_status) setEngineStatus(result.engine_status);
+      if (result.model_metadata) setModelMetadata(result.model_metadata);
       if (typeof result.metrics?.output_duration_seconds === "number" && result.metrics.output_duration_seconds > 0) {
         setPlaybackDuration(result.metrics.output_duration_seconds);
       }
@@ -1022,7 +1033,13 @@ export default function App() {
               : "Referans dosyası gerekli";
   const speakerReferencesRequired = activeModule === "speaker";
   const singingMidiSuggested = activeModule === "singing";
-  const convertBlockedReason = speakerReferencesRequired && referenceFiles.length === 0 ? "Konuşmacı Klonu için en az bir referans dosyası seç." : null;
+  const consentRequired = activeModule === "celebrity" || activeModule === "speaker";
+  const convertBlockedReason =
+    (consentRequired && !consentConfirmed)
+      ? "Bu modül için izin onayı gereklidir."
+      : speakerReferencesRequired && referenceFiles.length === 0
+        ? "Konuşmacı Klonu için en az bir referans dosyası seç."
+        : null;
   const convertButtonLabel = isConverting ? "İşleniyor..." : convertBlockedReason ? "Referans Gerekli" : "Sesi Dönüştür";
 
   return (
@@ -1173,6 +1190,12 @@ export default function App() {
                 </div>
               ) : null}
 
+              <ConsentGate
+                confirmed={consentConfirmed}
+                context={activeModule === "speaker" ? "speaker" : "celebrity"}
+                onConfirm={setConsentConfirmed}
+                visible={consentRequired}
+              />
               <div className={`mini-note ${convertBlockedReason ? "warn" : ""}`}>
                 {convertBlockedReason
                   ? convertBlockedReason
@@ -1319,6 +1342,11 @@ export default function App() {
                   <div className="empty-state">Backend metriklerini görmek için bir dönüşüm çalıştır.</div>
                 )}
               </div>
+              <EngineStatusPanel
+                engineStatus={engineStatus}
+                modelMetadata={modelMetadata}
+                visible={true}
+              />
             </section>
           </>
         ) : (
