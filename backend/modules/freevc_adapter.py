@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import logging
 import math
 import os
@@ -13,7 +13,13 @@ import numpy as np
 from scipy import signal
 import soundfile as sf
 
+from backend.audio.io import load_audio_mono
+from backend.audio.reference_preprocess import prepare_reference_from_paths, write_reference_wav
+
 logger = logging.getLogger(__name__)
+
+_MIN_FREEVC_REFERENCE_DURATION = 1.0
+_MIN_FREEVC_QUALITY_SCORE = 0.12
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _FREEVC_REQUIRED_FILES = (
@@ -43,6 +49,13 @@ class FreeVCModelConfig:
 class FreeVCConversionResult:
     audio: np.ndarray
     config: FreeVCModelConfig
+    metrics: dict[str, float] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class FreeVCSpeakerCloneAttempt:
+    result: FreeVCConversionResult | None
+    metrics: dict[str, float]
 
 
 def _resolve_project_path(raw_path: str | os.PathLike[str]) -> Path:
@@ -208,4 +221,75 @@ def convert_file_with_freevc(
     finally:
         _cleanup_temp_run_dir(temp_dir)
 
-    return FreeVCConversionResult(audio=np.asarray(audio, dtype=np.float32), config=config)
+    return FreeVCConversionResult(
+        audio=np.asarray(audio, dtype=np.float32),
+        config=config,
+        metrics={"freevc_engine": 1.0},
+    )
+
+
+def attempt_speaker_clone_with_freevc(
+    input_path: str,
+    reference_paths: list[str],
+    sample_rate: int,
+    *,
+    assets_dir: str | os.PathLike[str] | None = None,
+    device: str | None = None,
+    wavlm_model: str | os.PathLike[str] | None = None,
+) -> FreeVCSpeakerCloneAttempt:
+    """Referans kalitesini olc, en iyi referansi sec ve FreeVC donusumunu dene."""
+    base_metrics: dict[str, float] = {
+        "freevc_engine": 0.0,
+        "reference_count": float(len(reference_paths)),
+    }
+    if not reference_paths:
+        return FreeVCSpeakerCloneAttempt(result=None, metrics=base_metrics)
+
+    prepared = prepare_reference_from_paths(reference_paths, sample_rate, load_audio_mono)
+    if prepared is None:
+        return FreeVCSpeakerCloneAttempt(result=None, metrics=base_metrics)
+
+    metrics = {**base_metrics, **prepared.metrics}
+    quality = prepared.quality
+
+    if quality.too_short or quality.duration_seconds < _MIN_FREEVC_REFERENCE_DURATION:
+        metrics["freevc_skipped_reason"] = 1.0  # cok kisa referans
+        return FreeVCSpeakerCloneAttempt(result=None, metrics=metrics)
+
+    if quality.quality_score < _MIN_FREEVC_QUALITY_SCORE:
+        metrics["freevc_skipped_reason"] = 2.0  # dusuk kalite
+        return FreeVCSpeakerCloneAttempt(result=None, metrics=metrics)
+
+    if get_freevc_config(assets_dir=assets_dir, wavlm_model=wavlm_model) is None:
+        metrics["freevc_skipped_reason"] = 3.0  # asset yok
+        return FreeVCSpeakerCloneAttempt(result=None, metrics=metrics)
+
+    temp_dir = _create_temp_run_dir()
+    try:
+        reference_wav = write_reference_wav(prepared.audio, sample_rate, temp_dir)
+        try:
+            result = convert_file_with_freevc(
+                input_path,
+                str(reference_wav),
+                sample_rate,
+                assets_dir=assets_dir,
+                device=device,
+                wavlm_model=wavlm_model,
+            )
+        except (RuntimeError, FileNotFoundError, OSError) as exc:
+            logger.warning("FreeVC inference failed; falling back to DSP clone: %s", exc)
+            metrics["freevc_skipped_reason"] = 4.0
+            return FreeVCSpeakerCloneAttempt(result=None, metrics=metrics)
+    finally:
+        _cleanup_temp_run_dir(temp_dir)
+
+    if result is None:
+        metrics["freevc_skipped_reason"] = 3.0
+        return FreeVCSpeakerCloneAttempt(result=None, metrics=metrics)
+
+    merged = {**metrics, **result.metrics}
+    merged["freevc_engine"] = 1.0
+    return FreeVCSpeakerCloneAttempt(
+        result=FreeVCConversionResult(audio=result.audio, config=result.config, metrics=merged),
+        metrics=merged,
+    )
