@@ -1,7 +1,8 @@
 numpy>=1.24
 scipy>=1.10
 librosa>=0.10
-pyaudio>=0.2.13
+# Canli mikrofon: sounddevice yeterli. PyAudio Windows'ta PortAudio derlemesi gerektirir;
+# istege bagli: pip install -r requirements-live.txt
 sounddevice>=0.5
 soundfile>=0.12
 pydub>=0.25
