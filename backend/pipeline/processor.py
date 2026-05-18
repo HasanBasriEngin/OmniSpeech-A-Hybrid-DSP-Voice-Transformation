@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
 import os
 from pathlib import Path
 from time import perf_counter
@@ -9,6 +10,8 @@ from uuid import uuid4
 import numpy as np
 
 from backend.audio.filtering import post_filter_voice
+from backend.audio.dsp_metrics import measure_audio_health
+from backend.audio.dsp_profiles import get_dsp_profile_settings, update_dsp_profile
 from backend.audio.features import extract_pitch_contour
 from backend.audio.io import default_output_path, load_audio_mono, save_audio
 from backend.audio.spectrogram_image import SpectrogramImageResult, preprocess_spectrogram_for_model
@@ -23,10 +26,12 @@ from backend.modules.rvc_adapter import (
     get_rvc_config,
 )
 from backend.modules.freevc_adapter import convert_file_with_freevc
+from backend.modules.freevc_profiles import get_freevc_reference_profile
 from backend.modules.singing import convert_to_singing
 from backend.modules.speaker_clone import clone_speaker
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -46,12 +51,16 @@ class VoiceConversionPipeline:
         rvc_device: str | None = None,
         freevc_assets_dir: str | None = None,
         freevc_device: str | None = None,
+        freevc_profiles_dir: str | None = None,
+        dsp_profiles_dir: str | None = None,
     ) -> None:
         self.sample_rate = sample_rate
         self.rvc_models_dir = rvc_models_dir or SETTINGS.rvc_models_dir
         self.rvc_device = rvc_device or SETTINGS.rvc_device
         self.freevc_assets_dir = freevc_assets_dir or SETTINGS.freevc_assets_dir
         self.freevc_device = freevc_device or SETTINGS.freevc_device
+        self.freevc_profiles_dir = freevc_profiles_dir or SETTINGS.freevc_profiles_dir
+        self.dsp_profiles_dir = dsp_profiles_dir or SETTINGS.dsp_profiles_dir
 
     def convert_emotion_file(
         self,
@@ -72,10 +81,11 @@ class VoiceConversionPipeline:
             rate_override=rate_override,
             energy_override=energy_override,
         )
-        converted = post_filter_voice(converted, self.sample_rate)
+        converted, dsp_metrics = self._post_filter_with_autotune(converted, "emotion", engine="dsp")
         elapsed = perf_counter() - start
         path = save_audio(output_path or default_output_path(input_path, f"emotion_{emotion}"), converted, self.sample_rate)
         metrics = self._build_metrics(source, converted, elapsed)
+        metrics.update(dsp_metrics)
         metrics["emotion_profile"] = float(sorted(["angry", "calm", "excited", "sad", "whisper"]).index(emotion))
         if pitch_override is not None:
             metrics["pitch_override"] = float(pitch_override)
@@ -105,21 +115,50 @@ class VoiceConversionPipeline:
                 models_dir=self.rvc_models_dir,
                 device=self.rvc_device,
             )
+            freevc_gender_age_refine = 0.0
             if rvc_result is None:
-                converted = convert_gender_age(prepared.audio, self.sample_rate, mode)
                 rvc_engine = 0.0
+                freevc_engine = 0.0
+                freevc_profile = get_freevc_reference_profile(
+                    "gender_age",
+                    mode,
+                    profiles_dir=self.freevc_profiles_dir,
+                )
+                freevc_result = None
+                if freevc_profile is not None:
+                    freevc_result = convert_file_with_freevc(
+                        input_path,
+                        str(freevc_profile.reference_path),
+                        self.sample_rate,
+                        assets_dir=self.freevc_assets_dir,
+                        device=self.freevc_device,
+                    )
+
+                if freevc_result is None:
+                    converted = convert_gender_age(prepared.audio, self.sample_rate, mode)
+                else:
+                    converted = freevc_result.audio
+                    freevc_engine = 1.0
+                    if self._freevc_gender_age_refine_enabled():
+                        converted = convert_gender_age(converted, self.sample_rate, mode)
+                        freevc_gender_age_refine = 1.0
             else:
                 converted = rvc_result.audio
                 rvc_engine = 1.0
-            converted = post_filter_voice(converted, self.sample_rate)
+                freevc_engine = 0.0
+            engine = "rvc" if rvc_engine >= 1.0 else "freevc" if freevc_engine >= 1.0 else "dsp"
+            converted, dsp_metrics = self._post_filter_with_autotune(converted, "gender_age", engine=engine)
             elapsed = perf_counter() - start
         finally:
             if temp_dir is not None:
                 self._cleanup_temp_dir(temp_dir)
         path = save_audio(output_path or default_output_path(input_path, mode), converted, self.sample_rate)
         metrics = self._build_metrics(source, converted, elapsed)
+        metrics.update(dsp_metrics)
         metrics.update(prepared.metrics)
         metrics["rvc_engine"] = rvc_engine
+        metrics["freevc_engine"] = freevc_engine
+        metrics["freevc_gender_age_refine"] = freevc_gender_age_refine
         return PipelineResult(output_path=path, metrics=metrics)
 
     def convert_speaker_clone_file(
@@ -148,11 +187,13 @@ class VoiceConversionPipeline:
         else:
             converted = freevc_result.audio
             freevc_engine = 1.0
-        converted = post_filter_voice(converted, self.sample_rate)
+        engine = "freevc" if freevc_engine >= 1.0 else "dsp"
+        converted, dsp_metrics = self._post_filter_with_autotune(converted, "speaker_clone", engine=engine)
         elapsed = perf_counter() - start
 
         path = save_audio(output_path or default_output_path(input_path, "speaker_clone"), converted, self.sample_rate)
         metrics = self._build_metrics(source, converted, elapsed)
+        metrics.update(dsp_metrics)
         metrics["reference_count"] = float(len(reference_paths))
         metrics["freevc_engine"] = freevc_engine
         return PipelineResult(output_path=path, metrics=metrics)
@@ -173,11 +214,12 @@ class VoiceConversionPipeline:
             midi_path=midi_path,
             pitch_contour=pitch_contour,
         )
-        converted = post_filter_voice(converted, self.sample_rate)
+        converted, dsp_metrics = self._post_filter_with_autotune(converted, "singing", engine="dsp")
         elapsed = perf_counter() - start
 
         path = save_audio(output_path or default_output_path(input_path, "singing"), converted, self.sample_rate)
         metrics = self._build_metrics(source, converted, elapsed)
+        metrics.update(dsp_metrics)
         return PipelineResult(output_path=path, metrics=metrics)
 
     def convert_celebrity_file(self, input_path: str, celebrity: str, output_path: str | None = None) -> PipelineResult:
@@ -207,13 +249,15 @@ class VoiceConversionPipeline:
             else:
                 converted = rvc_result.audio
                 rvc_engine = 1.0
-            converted = post_filter_voice(converted, self.sample_rate)
+            engine = "rvc" if rvc_engine >= 1.0 else "dsp"
+            converted, dsp_metrics = self._post_filter_with_autotune(converted, "licensed_profile", engine=engine)
             elapsed = perf_counter() - start
         finally:
             if temp_dir is not None:
                 self._cleanup_temp_dir(temp_dir)
         path = save_audio(output_path or default_output_path(input_path, f"celebrity_{celebrity}"), converted, self.sample_rate)
         metrics = self._build_metrics(source, converted, elapsed)
+        metrics.update(dsp_metrics)
         metrics.update(prepared.metrics)
         metrics["celebrity_profile"] = float(
             sorted(["adele", "james_earl_jones", "michael_jackson", "morgan_freeman", "taylor_swift"]).index(celebrity)
@@ -290,6 +334,60 @@ class VoiceConversionPipeline:
             "output_median_f0": float(round(converted_pitch, 3)),
             "snr_estimate_db": float(round(snr, 3)),
         }
+
+    def _post_filter_with_autotune(
+        self,
+        audio: np.ndarray,
+        profile_name: str,
+        *,
+        engine: str,
+    ) -> tuple[np.ndarray, dict[str, float]]:
+        settings = get_dsp_profile_settings(profile_name, profiles_dir=self.dsp_profiles_dir)
+        pre_metrics = measure_audio_health(audio, self.sample_rate, prefix="pre_post_")
+        filter_settings = settings.as_filter_settings()
+        neural_safe_filter = engine in {"freevc", "rvc"}
+        if neural_safe_filter:
+            filter_settings.update(
+                {
+                    "use_noisereduce": False,
+                    "use_pedalboard": False,
+                    "post_gain_db": min(float(settings.post_gain_db), 0.0),
+                    "deess_reduction_db": min(float(settings.deess_reduction_db), 2.0),
+                }
+            )
+
+        filtered = post_filter_voice(audio, self.sample_rate, settings=filter_settings)
+        post_metrics = measure_audio_health(filtered, self.sample_rate, prefix="post_")
+
+        try:
+            updated = update_dsp_profile(
+                profile_name,
+                pre_metrics=pre_metrics,
+                post_metrics=post_metrics,
+                engine=engine,
+                profiles_dir=self.dsp_profiles_dir,
+            )
+            profile_updated = 1.0
+        except Exception as exc:  # pragma: no cover - defensive around local profile IO
+            logger.warning("DSP AutoTune profile update failed for %s: %s", profile_name, exc)
+            updated = settings
+            profile_updated = 0.0
+
+        metrics = {
+            **pre_metrics,
+            **post_metrics,
+            "dsp_autotune_applied": 1.0,
+            "dsp_profile_updated": profile_updated,
+            "dsp_post_gain_db": float(updated.post_gain_db),
+            "dsp_ceiling": float(updated.ceiling),
+            "dsp_deess_reduction_db": float(updated.deess_reduction_db),
+            "dsp_neural_safe_filter": 1.0 if neural_safe_filter else 0.0,
+        }
+        return filtered, metrics
+
+    @staticmethod
+    def _freevc_gender_age_refine_enabled() -> bool:
+        return os.getenv("OMNISPEECH_FREEVC_GENDER_AGE_REFINE", "").strip().lower() in {"1", "true", "yes", "on"}
 
     @staticmethod
     def _resolve_ai_preprocess_temp_root() -> Path:

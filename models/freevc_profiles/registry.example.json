@@ -1,0 +1,36 @@
+{
+  "gender_age": {
+    "male_to_female": {
+      "profile_id": "female_local_reference",
+      "reference_path": "references/female_local_reference.wav",
+      "consent_required": true,
+      "consent_owner": "authorized_local_voice",
+      "license": "private-consent",
+      "allow_any_source": false
+    },
+    "female_to_male": {
+      "profile_id": "male_local_reference",
+      "reference_path": "references/male_local_reference.wav",
+      "consent_required": true,
+      "consent_owner": "authorized_local_voice",
+      "license": "private-consent",
+      "allow_any_source": false
+    },
+    "adult_to_child": {
+      "profile_id": "child_local_reference",
+      "reference_path": "references/child_local_reference.wav",
+      "consent_required": true,
+      "consent_owner": "guardian_authorized_local_voice",
+      "license": "private-consent",
+      "allow_any_source": false
+    },
+    "adult_to_elderly": {
+      "profile_id": "elder_local_reference",
+      "reference_path": "references/elder_local_reference.wav",
+      "consent_required": true,
+      "consent_owner": "authorized_local_voice",
+      "license": "private-consent",
+      "allow_any_source": false
+    }
+  }
+}

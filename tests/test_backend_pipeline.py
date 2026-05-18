@@ -14,11 +14,18 @@ from backend.audio.io import normalize_audio
 from backend.audio.spectrogram_image import SpectrogramImageResult, preprocess_spectrogram_for_model
 from backend.modules import emotion as emotion_module
 from backend.modules import rvc_adapter
-from backend.modules.freevc_adapter import FreeVCConversionResult, FreeVCModelConfig, resolve_wavlm_model
+from backend.modules.freevc_adapter import (
+    FreeVCConversionResult,
+    FreeVCModelConfig,
+    _fit_duration,
+    get_freevc_config,
+    resolve_wavlm_model,
+)
 from backend.modules.hf_voice_assets import import_hf_voice_assets, plan_hf_voice_asset_imports
 from backend.pipeline import processor as processor_module
 from backend.pipeline.processor import VoiceConversionPipeline
 from backend.services.live_session import LiveSessionManager
+from backend.tools.import_freevc_assets import import_freevc_assets
 
 
 def _sine(sr: int = 22050, duration: float = 1.0) -> np.ndarray:
@@ -32,13 +39,45 @@ def _workspace_tmp_dir(prefix: str) -> Path:
     return tmp_dir
 
 
+def _write_minimal_freevc_source(root: Path, *, variant: str = "freevc-24") -> None:
+    for relative in ("commons.py", "models.py", "modules.py", "utils.py", "mel_processing.py"):
+        target = root / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("# test fixture\n", encoding="utf-8")
+
+    speaker_dir = root / "speaker_encoder"
+    (speaker_dir / "ckpt").mkdir(parents=True, exist_ok=True)
+    (speaker_dir / "__init__.py").write_text("", encoding="utf-8")
+    (speaker_dir / "voice_encoder.py").write_text("# test fixture\n", encoding="utf-8")
+    (speaker_dir / "ckpt" / "pretrained_bak_5805000.pt").write_bytes(b"speaker")
+
+    if variant == "freevc-24":
+        config_relative = "configs/freevc-24.json"
+        checkpoint_relative = "checkpoints/freevc-24.pth"
+    elif variant == "freevc":
+        config_relative = "configs/freevc.json"
+        checkpoint_relative = "checkpoints/freevc.pth"
+    else:
+        config_relative = "configs/freevc-s.json"
+        checkpoint_relative = "checkpoints/freevc-s.pth"
+
+    (root / config_relative).parent.mkdir(parents=True, exist_ok=True)
+    (root / config_relative).write_text("{}", encoding="utf-8")
+    (root / checkpoint_relative).parent.mkdir(parents=True, exist_ok=True)
+    (root / checkpoint_relative).write_bytes(b"checkpoint")
+
+
 def test_gender_age_file_conversion():
     tmp_dir = _workspace_tmp_dir("gender")
     source = _sine()
     source_path = tmp_dir / "in.wav"
     sf.write(str(source_path), source, 22050)
 
-    pipeline = VoiceConversionPipeline(sample_rate=22050, rvc_models_dir=str(tmp_dir / "models"))
+    pipeline = VoiceConversionPipeline(
+        sample_rate=22050,
+        rvc_models_dir=str(tmp_dir / "models"),
+        freevc_profiles_dir=str(tmp_dir / "profiles"),
+    )
     result = pipeline.convert_gender_age_file(str(source_path), mode="male_to_female")
 
     assert result.output_path.endswith(".wav")
@@ -83,6 +122,51 @@ def test_hf_voice_asset_import_writes_manifest_without_network():
 def test_wavlm_model_resolver_preserves_hugging_face_ids():
     assert resolve_wavlm_model("microsoft/wavlm-large") == "microsoft/wavlm-large"
     assert Path(resolve_wavlm_model("models/hf/wavlm-large")).name == "wavlm-large"
+
+
+def test_freevc_config_accepts_original_freevc_layout():
+    tmp_dir = _workspace_tmp_dir("freevc_original")
+    _write_minimal_freevc_source(tmp_dir, variant="freevc")
+
+    config = get_freevc_config(tmp_dir)
+
+    assert config is not None
+    assert config.model_id == "freevc-one-shot"
+    assert config.config_path.name == "freevc.json"
+    assert config.checkpoint_path.name == "freevc.pth"
+    assert config.output_sample_rate == 16000
+
+
+def test_freevc_duration_fit_matches_source_length():
+    audio = _sine(duration=0.4)
+    fitted = _fit_duration(audio, int(22050 * 0.25))
+
+    assert fitted.dtype == np.float32
+    assert fitted.size == int(22050 * 0.25)
+    assert np.all(np.isfinite(fitted))
+
+
+def test_import_freevc_assets_copies_local_original_layout():
+    tmp_dir = _workspace_tmp_dir("freevc_import")
+    source_dir = tmp_dir / "source"
+    target_dir = tmp_dir / "target"
+    _write_minimal_freevc_source(source_dir, variant="freevc")
+
+    manifest = import_freevc_assets(
+        source_root=source_dir,
+        target_dir=target_dir,
+        variant="freevc",
+    )
+
+    assert Path(str(manifest["manifest_path"])).exists()
+    assert (target_dir / "commons.py").exists()
+    assert (target_dir / "configs" / "freevc.json").exists()
+    assert (target_dir / "checkpoints" / "freevc.pth").exists()
+    assert (target_dir / "speaker_encoder" / "ckpt" / "pretrained_bak_5805000.pt").exists()
+
+    config = get_freevc_config(target_dir)
+    assert config is not None
+    assert config.model_id == "freevc-one-shot"
 
 
 def test_emotion_file_conversion():
@@ -132,11 +216,114 @@ def test_speaker_clone_file_prefers_freevc_when_assets_are_available(monkeypatch
 
     monkeypatch.setattr(processor_module, "convert_file_with_freevc", fake_convert_file_with_freevc)
 
-    pipeline = VoiceConversionPipeline(sample_rate=22050)
+    pipeline = VoiceConversionPipeline(sample_rate=22050, dsp_profiles_dir=str(tmp_dir / "dsp_profiles"))
     result = pipeline.convert_speaker_clone_file(str(source_path), [str(reference_path)])
 
     assert result.metrics["freevc_engine"] == 1.0
     assert result.metrics["reference_count"] == 1.0
+    assert result.metrics["dsp_autotune_applied"] == 1.0
+    assert result.metrics["dsp_neural_safe_filter"] == 1.0
+
+
+def test_neural_engine_post_filter_uses_conservative_settings(monkeypatch: pytest.MonkeyPatch):
+    tmp_dir = _workspace_tmp_dir("freevc_safe_post")
+    source = _sine(duration=0.25)
+    reference = _sine(duration=0.25) * 0.5
+    source_path = tmp_dir / "input.wav"
+    reference_path = tmp_dir / "reference.wav"
+    sf.write(str(source_path), source, 22050)
+    sf.write(str(reference_path), reference, 22050)
+
+    def fake_convert_file_with_freevc(
+        input_path: str,
+        reference_path_arg: str,
+        sample_rate: int,
+        **kwargs: object,
+    ) -> FreeVCConversionResult:
+        del input_path, reference_path_arg, sample_rate, kwargs
+        return FreeVCConversionResult(
+            audio=np.asarray(source * 0.7, dtype=np.float32),
+            config=FreeVCModelConfig(
+                model_id="freevc-24-one-shot",
+                assets_dir=tmp_dir,
+                checkpoint_path=tmp_dir / "freevc-24.pth",
+                config_path=tmp_dir / "freevc-24.json",
+                speaker_encoder_path=tmp_dir / "speaker.pt",
+                wavlm_model="models/hf/wavlm-large",
+            ),
+        )
+
+    captured_settings: list[dict[str, object]] = []
+
+    def fake_post_filter_voice(
+        audio: np.ndarray,
+        sample_rate: int,
+        *,
+        settings: dict[str, object] | None = None,
+    ) -> np.ndarray:
+        del sample_rate
+        captured_settings.append(dict(settings or {}))
+        return np.asarray(audio, dtype=np.float32)
+
+    monkeypatch.setattr(processor_module, "convert_file_with_freevc", fake_convert_file_with_freevc)
+    monkeypatch.setattr(processor_module, "post_filter_voice", fake_post_filter_voice)
+
+    pipeline = VoiceConversionPipeline(sample_rate=22050, dsp_profiles_dir=str(tmp_dir / "dsp_profiles"))
+    result = pipeline.convert_speaker_clone_file(str(source_path), [str(reference_path)])
+
+    assert result.metrics["dsp_neural_safe_filter"] == 1.0
+    assert captured_settings
+    assert captured_settings[0]["use_noisereduce"] is False
+    assert captured_settings[0]["use_pedalboard"] is False
+    assert captured_settings[0]["post_gain_db"] <= 0.0
+    assert captured_settings[0]["deess_reduction_db"] <= 2.0
+
+
+def test_dsp_autotune_updates_profile_even_when_freevc_is_used(monkeypatch: pytest.MonkeyPatch):
+    tmp_dir = _workspace_tmp_dir("dsp_autotune_freevc")
+    source = _sine(duration=0.25)
+    reference = _sine(duration=0.25) * 0.5
+    source_path = tmp_dir / "input.wav"
+    reference_path = tmp_dir / "reference.wav"
+    sf.write(str(source_path), source, 22050)
+    sf.write(str(reference_path), reference, 22050)
+
+    def fake_convert_file_with_freevc(
+        input_path: str,
+        reference_path_arg: str,
+        sample_rate: int,
+        **kwargs: object,
+    ) -> FreeVCConversionResult:
+        del input_path, reference_path_arg, sample_rate, kwargs
+        loud = source.copy()
+        loud[loud.size // 2] = 1.4
+        return FreeVCConversionResult(
+            audio=np.asarray(loud, dtype=np.float32),
+            config=FreeVCModelConfig(
+                model_id="freevc-24-one-shot",
+                assets_dir=tmp_dir,
+                checkpoint_path=tmp_dir / "freevc-24.pth",
+                config_path=tmp_dir / "freevc-24.json",
+                speaker_encoder_path=tmp_dir / "speaker.pt",
+                wavlm_model="models/hf/wavlm-large",
+            ),
+        )
+
+    monkeypatch.setattr(processor_module, "convert_file_with_freevc", fake_convert_file_with_freevc)
+
+    dsp_profiles_dir = tmp_dir / "dsp_profiles"
+    pipeline = VoiceConversionPipeline(sample_rate=22050, dsp_profiles_dir=str(dsp_profiles_dir))
+    result = pipeline.convert_speaker_clone_file(str(source_path), [str(reference_path)])
+
+    registry = json.loads((dsp_profiles_dir / "registry.json").read_text(encoding="utf-8"))
+    profile = registry["profiles"]["speaker_clone"]
+
+    assert result.metrics["freevc_engine"] == 1.0
+    assert result.metrics["dsp_profile_updated"] == 1.0
+    assert result.metrics["dsp_neural_safe_filter"] == 1.0
+    assert profile["last_engine"] == "freevc"
+    assert profile["updated_from_runs"] == 1
+    assert "post_peak" in profile["metrics_ema"]
 
 
 def test_gender_age_file_uses_rvc_lazily_when_registry_matches(monkeypatch: pytest.MonkeyPatch):
@@ -197,6 +384,164 @@ def test_gender_age_file_uses_rvc_lazily_when_registry_matches(monkeypatch: pyte
         ("params", (2, 0.25)),
         ("infer", "rvc_output.wav"),
     ]
+
+
+def test_gender_age_file_uses_freevc_reference_profile_when_configured(monkeypatch: pytest.MonkeyPatch):
+    tmp_dir = _workspace_tmp_dir("freevc_gender")
+    source = _sine(duration=0.25)
+    reference = _sine(duration=0.25) * 0.6
+    source_path = tmp_dir / "input.wav"
+    sf.write(str(source_path), source, 22050)
+
+    profiles_dir = tmp_dir / "profiles"
+    references_dir = profiles_dir / "references"
+    references_dir.mkdir(parents=True)
+    reference_path = references_dir / "female_local_reference.wav"
+    sf.write(str(reference_path), reference, 22050)
+    (profiles_dir / "registry.json").write_text(
+        json.dumps(
+            {
+                "gender_age": {
+                    "male_to_female": {
+                        "profile_id": "female_local_reference",
+                        "reference_path": "references/female_local_reference.wav",
+                        "consent_required": True,
+                        "consent_owner": "authorized_local_voice",
+                        "license": "private-consent",
+                        "allow_any_source": False,
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    calls: list[tuple[Path, Path, int, object]] = []
+
+    def fake_convert_file_with_freevc(
+        input_path: str,
+        reference_path_arg: str,
+        sample_rate: int,
+        **kwargs: object,
+    ) -> FreeVCConversionResult:
+        calls.append((Path(input_path), Path(reference_path_arg), sample_rate, kwargs["assets_dir"]))
+        return FreeVCConversionResult(
+            audio=np.asarray(source * 0.4, dtype=np.float32),
+            config=FreeVCModelConfig(
+                model_id="freevc-24-one-shot",
+                assets_dir=tmp_dir,
+                checkpoint_path=tmp_dir / "freevc-24.pth",
+                config_path=tmp_dir / "freevc-24.json",
+                speaker_encoder_path=tmp_dir / "speaker.pt",
+                wavlm_model="models/hf/wavlm-large",
+            ),
+        )
+
+    monkeypatch.setattr(processor_module, "convert_file_with_freevc", fake_convert_file_with_freevc)
+
+    pipeline = VoiceConversionPipeline(
+        sample_rate=22050,
+        rvc_models_dir=str(tmp_dir / "rvc"),
+        freevc_assets_dir="models/hf/freevc-24",
+        freevc_profiles_dir=str(profiles_dir),
+    )
+    result = pipeline.convert_gender_age_file(str(source_path), mode="male_to_female")
+
+    assert result.metrics["rvc_engine"] == 0.0
+    assert result.metrics["freevc_engine"] == 1.0
+    assert result.metrics["freevc_gender_age_refine"] == 0.0
+    assert result.metrics["dsp_neural_safe_filter"] == 1.0
+    assert calls == [(source_path, reference_path.resolve(), 22050, "models/hf/freevc-24")]
+
+
+def test_gender_age_freevc_reference_profile_can_opt_into_dsp_refine(monkeypatch: pytest.MonkeyPatch):
+    tmp_dir = _workspace_tmp_dir("freevc_gender_refine")
+    source = _sine(duration=0.25)
+    source_path = tmp_dir / "input.wav"
+    sf.write(str(source_path), source, 22050)
+
+    profiles_dir = tmp_dir / "profiles"
+    references_dir = profiles_dir / "references"
+    references_dir.mkdir(parents=True)
+    reference_path = references_dir / "female_local_reference.wav"
+    sf.write(str(reference_path), source * 0.6, 22050)
+    (profiles_dir / "registry.json").write_text(
+        json.dumps(
+            {
+                "gender_age": {
+                    "male_to_female": {
+                        "profile_id": "female_local_reference",
+                        "reference_path": "references/female_local_reference.wav",
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def fake_convert_file_with_freevc(
+        input_path: str,
+        reference_path_arg: str,
+        sample_rate: int,
+        **kwargs: object,
+    ) -> FreeVCConversionResult:
+        del input_path, reference_path_arg, sample_rate, kwargs
+        return FreeVCConversionResult(
+            audio=np.asarray(source * 0.4, dtype=np.float32),
+            config=FreeVCModelConfig(
+                model_id="freevc-24-one-shot",
+                assets_dir=tmp_dir,
+                checkpoint_path=tmp_dir / "freevc-24.pth",
+                config_path=tmp_dir / "freevc-24.json",
+                speaker_encoder_path=tmp_dir / "speaker.pt",
+                wavlm_model="models/hf/wavlm-large",
+            ),
+        )
+
+    monkeypatch.setattr(processor_module, "convert_file_with_freevc", fake_convert_file_with_freevc)
+    monkeypatch.setenv("OMNISPEECH_FREEVC_GENDER_AGE_REFINE", "1")
+
+    pipeline = VoiceConversionPipeline(
+        sample_rate=22050,
+        rvc_models_dir=str(tmp_dir / "rvc"),
+        freevc_profiles_dir=str(profiles_dir),
+        dsp_profiles_dir=str(tmp_dir / "dsp_profiles"),
+    )
+    result = pipeline.convert_gender_age_file(str(source_path), mode="male_to_female")
+
+    assert result.metrics["freevc_engine"] == 1.0
+    assert result.metrics["freevc_gender_age_refine"] == 1.0
+
+
+def test_gender_age_freevc_reference_profile_missing_file_is_explicit():
+    tmp_dir = _workspace_tmp_dir("freevc_gender_missing")
+    source_path = tmp_dir / "input.wav"
+    sf.write(str(source_path), _sine(duration=0.25), 22050)
+
+    profiles_dir = tmp_dir / "profiles"
+    profiles_dir.mkdir()
+    (profiles_dir / "registry.json").write_text(
+        json.dumps(
+            {
+                "gender_age": {
+                    "male_to_female": {
+                        "profile_id": "female_local_reference",
+                        "reference_path": "references/female_local_reference.wav",
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    pipeline = VoiceConversionPipeline(
+        sample_rate=22050,
+        rvc_models_dir=str(tmp_dir / "rvc"),
+        freevc_profiles_dir=str(profiles_dir),
+    )
+
+    with pytest.raises(FileNotFoundError, match="FreeVC reference profile configured.*file not found"):
+        pipeline.convert_gender_age_file(str(source_path), mode="male_to_female")
 
 
 def test_gender_age_rvc_receives_spectrogram_preprocessed_audio(monkeypatch: pytest.MonkeyPatch):

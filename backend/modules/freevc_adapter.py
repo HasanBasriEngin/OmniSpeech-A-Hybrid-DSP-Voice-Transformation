@@ -16,15 +16,19 @@ import soundfile as sf
 logger = logging.getLogger(__name__)
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
-_FREEVC_REQUIRED_FILES = (
-    "configs/freevc-24.json",
-    "checkpoints/freevc-24.pth",
+_FREEVC_SUPPORT_FILES = (
     "speaker_encoder/ckpt/pretrained_bak_5805000.pt",
+    "speaker_encoder/voice_encoder.py",
     "commons.py",
     "models.py",
     "modules.py",
     "utils.py",
     "mel_processing.py",
+)
+_FREEVC_MODEL_CANDIDATES = (
+    ("freevc-24-one-shot", "configs/freevc-24.json", "checkpoints/freevc-24.pth", 24000),
+    ("freevc-one-shot", "configs/freevc.json", "checkpoints/freevc.pth", 16000),
+    ("freevc-s-one-shot", "configs/freevc-s.json", "checkpoints/freevc-s.pth", 16000),
 )
 
 
@@ -86,19 +90,30 @@ def get_freevc_config(
     if not root.exists():
         return None
 
-    missing = [relative for relative in _FREEVC_REQUIRED_FILES if not (root / relative).exists()]
+    missing = [relative for relative in _FREEVC_SUPPORT_FILES if not (root / relative).exists()]
     if missing:
         logger.debug("FreeVC assets are incomplete under %s; missing: %s", root, ", ".join(missing))
         return None
 
-    return FreeVCModelConfig(
-        model_id="freevc-24-one-shot",
-        assets_dir=root,
-        checkpoint_path=root / "checkpoints" / "freevc-24.pth",
-        config_path=root / "configs" / "freevc-24.json",
-        speaker_encoder_path=root / "speaker_encoder" / "ckpt" / "pretrained_bak_5805000.pt",
-        wavlm_model=resolve_wavlm_model(wavlm_model),
+    for model_id, config_relative, checkpoint_relative, output_sample_rate in _FREEVC_MODEL_CANDIDATES:
+        config_path = root / config_relative
+        checkpoint_path = root / checkpoint_relative
+        if config_path.exists() and checkpoint_path.exists():
+            return FreeVCModelConfig(
+                model_id=model_id,
+                assets_dir=root,
+                checkpoint_path=checkpoint_path,
+                config_path=config_path,
+                speaker_encoder_path=root / "speaker_encoder" / "ckpt" / "pretrained_bak_5805000.pt",
+                wavlm_model=resolve_wavlm_model(wavlm_model),
+                output_sample_rate=output_sample_rate,
+            )
+
+    logger.debug(
+        "FreeVC support files exist under %s, but no supported config/checkpoint pair was found.",
+        root,
     )
+    return None
 
 
 def _resolve_temp_dir() -> Path:
@@ -144,6 +159,43 @@ def _load_output_audio(path: Path, sample_rate: int) -> np.ndarray:
     return np.asarray(x, dtype=np.float32)
 
 
+def _estimate_source_samples(path: Path, sample_rate: int) -> int:
+    try:
+        info = sf.info(str(path))
+        if info.samplerate > 0 and info.frames > 0:
+            return int(round((info.frames / info.samplerate) * sample_rate))
+    except Exception:
+        pass
+    return 0
+
+
+def _fit_duration(audio: np.ndarray, target_samples: int) -> np.ndarray:
+    x = np.asarray(audio, dtype=np.float32)
+    if x.size == 0 or target_samples <= 0:
+        return x
+
+    length_delta = abs(x.size - target_samples)
+    if length_delta <= max(128, int(target_samples * 0.015)):
+        if x.size > target_samples:
+            return x[:target_samples].astype(np.float32)
+        return np.pad(x, (0, target_samples - x.size)).astype(np.float32)
+
+    try:
+        import librosa
+
+        rate = float(x.size / target_samples)
+        stretched = librosa.effects.time_stretch(x.astype(np.float32), rate=rate)
+        x = np.asarray(stretched, dtype=np.float32)
+    except Exception:
+        x = signal.resample(x, target_samples).astype(np.float32)
+
+    if x.size > target_samples:
+        x = x[:target_samples]
+    elif x.size < target_samples:
+        x = np.pad(x, (0, target_samples - x.size))
+    return np.asarray(x, dtype=np.float32)
+
+
 def _format_runner_error(completed: subprocess.CompletedProcess[str]) -> str:
     stderr = (completed.stderr or "").strip()
     stdout = (completed.stdout or "").strip()
@@ -181,6 +233,12 @@ def convert_file_with_freevc(
             "backend.tools.run_freevc_inference",
             "--assets-dir",
             str(config.assets_dir),
+            "--config",
+            str(config.config_path),
+            "--checkpoint",
+            str(config.checkpoint_path),
+            "--speaker-encoder",
+            str(config.speaker_encoder_path),
             "--wavlm-model",
             config.wavlm_model,
             "--input",
@@ -205,6 +263,7 @@ def convert_file_with_freevc(
             raise RuntimeError(f"FreeVC inference did not create an output file: {output_path}")
 
         audio = _load_output_audio(output_path, sample_rate)
+        audio = _fit_duration(audio, _estimate_source_samples(source_path, sample_rate))
     finally:
         _cleanup_temp_run_dir(temp_dir)
 

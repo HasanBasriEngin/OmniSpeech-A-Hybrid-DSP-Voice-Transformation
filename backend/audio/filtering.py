@@ -9,6 +9,7 @@ This module now covers two cases:
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 import warnings
 
 import numpy as np
@@ -221,7 +222,7 @@ def _soft_limit(
     return out.astype(np.float32)
 
 
-def _deess(audio: np.ndarray, sample_rate: int) -> np.ndarray:
+def _deess(audio: np.ndarray, sample_rate: int, *, reduction_db: float = _DESS_REDUCTION_DB) -> np.ndarray:
     """Reduce excessive sibilance when the high-frequency band dominates."""
     x = _as_mono_float(audio)
     if x.size < 64:
@@ -248,9 +249,27 @@ def _deess(audio: np.ndarray, sample_rate: int) -> np.ndarray:
     if ratio < 0.25:
         return x
 
-    reduction_lin = 10.0 ** (-_DESS_REDUCTION_DB / 20.0)
+    reduction_lin = 10.0 ** (-max(0.0, float(reduction_db)) / 20.0)
     gain = 1.0 - (1.0 - reduction_lin) * np.clip((ratio - 0.25) / 0.75, 0.0, 1.0)
     return (x - sibilant + sibilant * float(gain)).astype(np.float32)
+
+
+def _settings_float(settings: Mapping[str, object] | None, key: str, default: float, lower: float, upper: float) -> float:
+    if settings is None:
+        return default
+    value = settings.get(key)
+    if isinstance(value, (int, float)):
+        return float(np.clip(float(value), lower, upper))
+    return default
+
+
+def _settings_bool(settings: Mapping[str, object] | None, key: str, default: bool) -> bool:
+    if settings is None:
+        return default
+    value = settings.get(key)
+    if isinstance(value, bool):
+        return value
+    return default
 
 
 def apply_post_filter(
@@ -265,6 +284,8 @@ def apply_post_filter(
     ceiling: float = _SOFT_LIMIT_CEIL,
     use_noisereduce: bool = True,
     use_pedalboard: bool = True,
+    deess_reduction_db: float = _DESS_REDUCTION_DB,
+    post_gain_db: float = 0.0,
 ) -> np.ndarray:
     """Apply the shared offline post-processing chain."""
     x = _as_mono_float(audio)
@@ -284,14 +305,22 @@ def apply_post_filter(
     if declick:
         x = _declick(x, sample_rate)
     if deess:
-        x = _deess(x, sample_rate)
+        x = _deess(x, sample_rate, reduction_db=deess_reduction_db)
+    if post_gain_db:
+        x = (x * float(10.0 ** (post_gain_db / 20.0))).astype(np.float32)
     if soft_limit:
         x = _soft_limit(x, ceiling=ceiling, knee_db=knee_db)
 
     return np.asarray(x, dtype=np.float32)
 
 
-def post_filter_voice(audio: np.ndarray, sample_rate: int, *, realtime: bool = False) -> np.ndarray:
+def post_filter_voice(
+    audio: np.ndarray,
+    sample_rate: int,
+    *,
+    realtime: bool = False,
+    settings: Mapping[str, object] | None = None,
+) -> np.ndarray:
     """
     Public convenience wrapper used by conversion pipelines.
 
@@ -303,7 +332,16 @@ def post_filter_voice(audio: np.ndarray, sample_rate: int, *, realtime: bool = F
         return x
 
     x = x - float(np.mean(x))
-    x = apply_post_filter(x, sample_rate, use_noisereduce=not realtime, use_pedalboard=not realtime)
+    x = apply_post_filter(
+        x,
+        sample_rate,
+        use_noisereduce=(not realtime) and _settings_bool(settings, "use_noisereduce", True),
+        use_pedalboard=(not realtime) and _settings_bool(settings, "use_pedalboard", True),
+        ceiling=_settings_float(settings, "ceiling", _SOFT_LIMIT_CEIL, 0.82, 0.99),
+        knee_db=_settings_float(settings, "knee_db", _DEFAULT_KNEE_DB, 0.0, 12.0),
+        deess_reduction_db=_settings_float(settings, "deess_reduction_db", _DESS_REDUCTION_DB, 0.0, 12.0),
+        post_gain_db=_settings_float(settings, "post_gain_db", 0.0, -8.0, 6.0),
+    )
 
     if not realtime:
         x = _fade_edges(x, sample_rate)
