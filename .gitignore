@@ -45,3 +45,6 @@ models/freevc_profiles/**/*.m4a
 models/dsp_profiles/registry.json
 models/hf/*
 !models/hf/README.md
+
+# Optional local checkout used by the Applio RVC bridge
+vendor/applio/

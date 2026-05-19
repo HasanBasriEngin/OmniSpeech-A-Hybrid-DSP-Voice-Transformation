@@ -10,6 +10,7 @@ type GenderMode = "male_to_female" | "female_to_male" | "adult_to_child" | "adul
 type NavigationKey = "workspace" | "evaluation" | "settings";
 type InputMode = "file" | "mic";
 type FeatureTab = "f0" | "mfcc" | "energy";
+type QualityFeedbackKey = "clean" | "muffled" | "harsh" | "robotic" | "too_thin" | "too_thick" | "noisy" | "unnatural";
 
 type LogEntry = {
   time: string;
@@ -69,6 +70,17 @@ const genderModeDescriptions: Record<GenderMode, string> = {
   adult_to_child:   "Yüksek perde ve küçük vokal şekli",
   adult_to_elderly: "Yaşlı timbr ile yumuşak perde kayması",
   child_to_adult:   "Düşük perde ve dolgun yetişkin tonu",
+};
+
+const qualityFeedbackLabels: Record<QualityFeedbackKey, string> = {
+  clean: "Temiz",
+  muffled: "Boguk",
+  harsh: "Cizirtili",
+  robotic: "Robotik",
+  too_thin: "Cok ince",
+  too_thick: "Cok kalin",
+  noisy: "Parazitli",
+  unnatural: "Dogal degil",
 };
 
 function nowClock() {
@@ -406,6 +418,9 @@ export default function App() {
 
   const [backendReady, setBackendReady] = useState(false);
   const [isConverting, setIsConverting] = useState(false);
+  const [useAiEngines, setUseAiEngines] = useState(false);
+  const [feedbackPending, setFeedbackPending] = useState<QualityFeedbackKey | null>(null);
+  const [lastFeedback, setLastFeedback] = useState<QualityFeedbackKey | null>(null);
   const [isLive, setIsLive] = useState(false);
   const [liveSessionId, setLiveSessionId] = useState<string | null>(null);
   const [isRecording, setIsRecording] = useState(false);
@@ -444,6 +459,13 @@ export default function App() {
     setLogEntries((prev) => [...prev, { time: nowClock(), text, pending }].slice(-100));
   };
 
+  const engineModeLabel = useAiEngines ? "RVC/FreeVC" : "Pure DSP";
+  const toggleEngineMode = () => {
+    const next = !useAiEngines;
+    setUseAiEngines(next);
+    addLog(`Motor modu: ${next ? "RVC/FreeVC" : "Pure DSP"}`);
+  };
+
   const moduleButtons = useMemo(() => (Object.keys(moduleMeta) as ModuleKey[]).map((key) => ({ key, ...moduleMeta[key] })), []);
   const activeTask = useMemo(
     () =>
@@ -458,6 +480,7 @@ export default function App() {
               : "gender_age",
     [activeModule],
   );
+  const dspProfileName = useMemo(() => (activeTask === "celebrity" ? "licensed_profile" : activeTask), [activeTask]);
 
   const metricValues = useMemo(() => {
     const processingSeconds = metrics.processing_seconds ?? 1.4;
@@ -876,17 +899,17 @@ export default function App() {
     }
 
     setIsConverting(true);
-    addLog(`Dönüşüm başladı: ${moduleMeta[activeModule].labelTr}`, true);
+    addLog(`Dönüşüm başladı: ${moduleMeta[activeModule].labelTr} | Motor: ${engineModeLabel}`, true);
 
     try {
       let result: ConversionPayload;
 
       if (activeTask === "emotion") {
-        result = await api.convertEmotion(inputPath, selectedEmotion, pitchValue, rateValue, energyValue, null);
+        result = await api.convertEmotion(inputPath, selectedEmotion, pitchValue, rateValue, energyValue, null, useAiEngines);
       } else if (activeTask === "gender_age") {
-        result = await api.convertGenderAge(inputPath, selectedGenderMode, null);
+        result = await api.convertGenderAge(inputPath, selectedGenderMode, null, useAiEngines);
       } else if (activeTask === "celebrity") {
-        result = await api.convertCelebrity(inputPath, selectedCelebrity, null);
+        result = await api.convertCelebrity(inputPath, selectedCelebrity, null, useAiEngines);
       } else if (activeTask === "speaker_clone") {
         let refs = referenceFiles;
         if (refs.length === 0) {
@@ -895,10 +918,10 @@ export default function App() {
         if (refs.length === 0) {
           throw new Error("Konuşmacı klonu için referans dosya gerekli");
         }
-        result = await api.convertSpeakerClone(inputPath, refs, null);
+        result = await api.convertSpeakerClone(inputPath, refs, null, useAiEngines);
       } else {
         const pitchContour = midiFile ? null : [manualPitchHz(pitchValue)];
-        result = await api.convertSinging(inputPath, midiFile, pitchContour, null);
+        result = await api.convertSinging(inputPath, midiFile, pitchContour, null, useAiEngines);
       }
 
       const nextOutputPath = getOutputPath(result);
@@ -918,6 +941,29 @@ export default function App() {
       addLog(`Dönüşüm başarısız: ${normalizeError(err)}`, true);
     } finally {
       setIsConverting(false);
+    }
+  };
+
+  const sendQualityFeedback = async (feedback: QualityFeedbackKey) => {
+    if (!outputPath) {
+      addLog("Kalite geri bildirimi icin once cikti olustur", true);
+      return;
+    }
+
+    const ready = await ensureBackend();
+    if (!ready) {
+      return;
+    }
+
+    setFeedbackPending(feedback);
+    try {
+      await api.sendDspFeedback(dspProfileName, feedback);
+      setLastFeedback(feedback);
+      addLog(`Kalite geri bildirimi kaydedildi: ${qualityFeedbackLabels[feedback]}`);
+    } catch (err) {
+      addLog(`Kalite geri bildirimi kaydedilemedi: ${normalizeError(err)}`, true);
+    } finally {
+      setFeedbackPending(null);
     }
   };
 
@@ -1040,6 +1086,18 @@ export default function App() {
           <span className="status-text">{statusText}</span>
           <div className="tag">{moduleMeta[activeModule].labelTr}</div>
           <div className="tag">{inputMode === "mic" ? "Mikrofon" : "Dosya"}</div>
+          <button
+            aria-pressed={useAiEngines}
+            className={`engine-switch ${useAiEngines ? "ai" : ""}`}
+            onClick={toggleEngineMode}
+            title="RVC/FreeVC motorlarini ac/kapat"
+            type="button"
+          >
+            <span className="engine-switch-track">
+              <span className="engine-switch-thumb" />
+            </span>
+            <span className="engine-switch-text">{engineModeLabel}</span>
+          </button>
         </div>
       </header>
 
@@ -1463,6 +1521,25 @@ export default function App() {
             </div>
           ) : null}
         </div>
+
+        {outputPath ? (
+          <div className="quality-feedback">
+            <div className="panel-title">Kalite</div>
+            <div className="quality-grid">
+              {(Object.keys(qualityFeedbackLabels) as QualityFeedbackKey[]).map((feedback) => (
+                <button
+                  className={`quality-btn ${lastFeedback === feedback ? "selected" : ""}`}
+                  disabled={feedbackPending !== null}
+                  key={feedback}
+                  onClick={() => void sendQualityFeedback(feedback)}
+                  type="button"
+                >
+                  {feedbackPending === feedback ? "..." : qualityFeedbackLabels[feedback]}
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : null}
 
         <div className="panel-live">
           <div className="panel-title">Canlı Mod</div>

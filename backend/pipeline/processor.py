@@ -14,6 +14,7 @@ from backend.audio.dsp_metrics import measure_audio_health
 from backend.audio.dsp_profiles import get_dsp_profile_settings, update_dsp_profile
 from backend.audio.features import extract_pitch_contour
 from backend.audio.io import default_output_path, load_audio_mono, save_audio
+from backend.audio.pure_dsp import merge_preserving_noise_regions, prepare_clean_speech
 from backend.audio.spectrogram_image import SpectrogramImageResult, preprocess_spectrogram_for_model
 from backend.config import SETTINGS
 from backend.modules.emotion import convert_emotion
@@ -70,22 +71,35 @@ class VoiceConversionPipeline:
         rate_override: float | None = None,
         energy_override: float | None = None,
         output_path: str | None = None,
+        *,
+        use_ai_engines: bool = True,
     ) -> PipelineResult:
         source = load_audio_mono(input_path, self.sample_rate)
+        clean = prepare_clean_speech(source, self.sample_rate)
         start = perf_counter()
         converted = convert_emotion(
-            source,
+            clean.audio,
             self.sample_rate,
             emotion,
             pitch_override=pitch_override,
             rate_override=rate_override,
             energy_override=energy_override,
         )
+        settings = get_dsp_profile_settings("emotion", profiles_dir=self.dsp_profiles_dir)
+        converted = merge_preserving_noise_regions(
+            clean.audio,
+            converted,
+            self.sample_rate,
+            intensity=settings.transform_intensity,
+            smoothing=settings.formant_smoothing,
+        )
         converted, dsp_metrics = self._post_filter_with_autotune(converted, "emotion", engine="dsp")
         elapsed = perf_counter() - start
         path = save_audio(output_path or default_output_path(input_path, f"emotion_{emotion}"), converted, self.sample_rate)
         metrics = self._build_metrics(source, converted, elapsed)
+        metrics.update(clean.metrics)
         metrics.update(dsp_metrics)
+        metrics["ai_engines_enabled"] = 1.0 if use_ai_engines else 0.0
         metrics["emotion_profile"] = float(sorted(["angry", "calm", "excited", "sad", "whisper"]).index(emotion))
         if pitch_override is not None:
             metrics["pitch_override"] = float(pitch_override)
@@ -95,37 +109,50 @@ class VoiceConversionPipeline:
             metrics["energy_override"] = float(energy_override)
         return PipelineResult(output_path=path, metrics=metrics)
 
-    def convert_gender_age_file(self, input_path: str, mode: str, output_path: str | None = None) -> PipelineResult:
+    def convert_gender_age_file(
+        self,
+        input_path: str,
+        mode: str,
+        output_path: str | None = None,
+        *,
+        use_ai_engines: bool = True,
+    ) -> PipelineResult:
         source = load_audio_mono(input_path, self.sample_rate)
+        clean = prepare_clean_speech(source, self.sample_rate)
         start = perf_counter()
-        prepared = preprocess_spectrogram_for_model(source, self.sample_rate)
+        prepared = preprocess_spectrogram_for_model(clean.audio, self.sample_rate)
         temp_dir: Path | None = None
         try:
             rvc_input_path = input_path
             if (
-                get_gender_age_rvc_config(mode, models_dir=self.rvc_models_dir) is not None
+                use_ai_engines
+                and get_gender_age_rvc_config(mode, models_dir=self.rvc_models_dir) is not None
                 and prepared.metrics.get("opencv_spectrogram_applied", 0.0) > 0.0
             ):
                 rvc_input_path, temp_dir = self._write_ai_preprocessed_input(prepared, self.sample_rate, "gender_age")
 
-            rvc_result = convert_gender_age_with_rvc(
-                rvc_input_path,
-                mode,
-                self.sample_rate,
-                models_dir=self.rvc_models_dir,
-                device=self.rvc_device,
-            )
+            rvc_result = None
+            if use_ai_engines:
+                rvc_result = convert_gender_age_with_rvc(
+                    rvc_input_path,
+                    mode,
+                    self.sample_rate,
+                    models_dir=self.rvc_models_dir,
+                    device=self.rvc_device,
+                )
             freevc_gender_age_refine = 0.0
             if rvc_result is None:
                 rvc_engine = 0.0
                 freevc_engine = 0.0
-                freevc_profile = get_freevc_reference_profile(
-                    "gender_age",
-                    mode,
-                    profiles_dir=self.freevc_profiles_dir,
-                )
                 freevc_result = None
-                if freevc_profile is not None:
+                freevc_profile = None
+                if use_ai_engines:
+                    freevc_profile = get_freevc_reference_profile(
+                        "gender_age",
+                        mode,
+                        profiles_dir=self.freevc_profiles_dir,
+                    )
+                if use_ai_engines and freevc_profile is not None:
                     freevc_result = convert_file_with_freevc(
                         input_path,
                         str(freevc_profile.reference_path),
@@ -136,6 +163,14 @@ class VoiceConversionPipeline:
 
                 if freevc_result is None:
                     converted = convert_gender_age(prepared.audio, self.sample_rate, mode)
+                    settings = get_dsp_profile_settings("gender_age", profiles_dir=self.dsp_profiles_dir)
+                    converted = merge_preserving_noise_regions(
+                        prepared.audio,
+                        converted,
+                        self.sample_rate,
+                        intensity=settings.transform_intensity,
+                        smoothing=settings.formant_smoothing,
+                    )
                 else:
                     converted = freevc_result.audio
                     freevc_engine = 1.0
@@ -154,8 +189,10 @@ class VoiceConversionPipeline:
                 self._cleanup_temp_dir(temp_dir)
         path = save_audio(output_path or default_output_path(input_path, mode), converted, self.sample_rate)
         metrics = self._build_metrics(source, converted, elapsed)
+        metrics.update(clean.metrics)
         metrics.update(dsp_metrics)
         metrics.update(prepared.metrics)
+        metrics["ai_engines_enabled"] = 1.0 if use_ai_engines else 0.0
         metrics["rvc_engine"] = rvc_engine
         metrics["freevc_engine"] = freevc_engine
         metrics["freevc_gender_age_refine"] = freevc_gender_age_refine
@@ -166,12 +203,15 @@ class VoiceConversionPipeline:
         input_path: str,
         reference_paths: list[str],
         output_path: str | None = None,
+        *,
+        use_ai_engines: bool = True,
     ) -> PipelineResult:
         source = load_audio_mono(input_path, self.sample_rate)
+        clean = prepare_clean_speech(source, self.sample_rate)
 
         start = perf_counter()
         freevc_result = None
-        if reference_paths:
+        if use_ai_engines and reference_paths:
             freevc_result = convert_file_with_freevc(
                 input_path,
                 reference_paths[0],
@@ -181,8 +221,16 @@ class VoiceConversionPipeline:
             )
 
         if freevc_result is None:
-            references = [load_audio_mono(path, self.sample_rate) for path in reference_paths]
-            converted = clone_speaker(source, self.sample_rate, references)
+            references = [prepare_clean_speech(load_audio_mono(path, self.sample_rate), self.sample_rate).audio for path in reference_paths]
+            converted = clone_speaker(clean.audio, self.sample_rate, references)
+            settings = get_dsp_profile_settings("speaker_clone", profiles_dir=self.dsp_profiles_dir)
+            converted = merge_preserving_noise_regions(
+                clean.audio,
+                converted,
+                self.sample_rate,
+                intensity=settings.transform_intensity,
+                smoothing=settings.formant_smoothing,
+            )
             freevc_engine = 0.0
         else:
             converted = freevc_result.audio
@@ -193,8 +241,10 @@ class VoiceConversionPipeline:
 
         path = save_audio(output_path or default_output_path(input_path, "speaker_clone"), converted, self.sample_rate)
         metrics = self._build_metrics(source, converted, elapsed)
+        metrics.update(clean.metrics)
         metrics.update(dsp_metrics)
         metrics["reference_count"] = float(len(reference_paths))
+        metrics["ai_engines_enabled"] = 1.0 if use_ai_engines else 0.0
         metrics["freevc_engine"] = freevc_engine
         return PipelineResult(output_path=path, metrics=metrics)
 
@@ -204,47 +254,79 @@ class VoiceConversionPipeline:
         midi_path: str | None,
         pitch_contour: list[float] | None,
         output_path: str | None = None,
+        *,
+        use_ai_engines: bool = True,
     ) -> PipelineResult:
         source = load_audio_mono(input_path, self.sample_rate)
+        clean = prepare_clean_speech(source, self.sample_rate)
 
         start = perf_counter()
         converted = convert_to_singing(
-            audio=source,
+            audio=clean.audio,
             sample_rate=self.sample_rate,
             midi_path=midi_path,
             pitch_contour=pitch_contour,
+        )
+        settings = get_dsp_profile_settings("singing", profiles_dir=self.dsp_profiles_dir)
+        converted = merge_preserving_noise_regions(
+            clean.audio,
+            converted,
+            self.sample_rate,
+            intensity=settings.transform_intensity,
+            smoothing=settings.formant_smoothing,
         )
         converted, dsp_metrics = self._post_filter_with_autotune(converted, "singing", engine="dsp")
         elapsed = perf_counter() - start
 
         path = save_audio(output_path or default_output_path(input_path, "singing"), converted, self.sample_rate)
         metrics = self._build_metrics(source, converted, elapsed)
+        metrics.update(clean.metrics)
         metrics.update(dsp_metrics)
+        metrics["ai_engines_enabled"] = 1.0 if use_ai_engines else 0.0
         return PipelineResult(output_path=path, metrics=metrics)
 
-    def convert_celebrity_file(self, input_path: str, celebrity: str, output_path: str | None = None) -> PipelineResult:
+    def convert_celebrity_file(
+        self,
+        input_path: str,
+        celebrity: str,
+        output_path: str | None = None,
+        *,
+        use_ai_engines: bool = True,
+    ) -> PipelineResult:
         source = load_audio_mono(input_path, self.sample_rate)
+        clean = prepare_clean_speech(source, self.sample_rate)
         start = perf_counter()
-        prepared = preprocess_spectrogram_for_model(source, self.sample_rate)
+        prepared = preprocess_spectrogram_for_model(clean.audio, self.sample_rate)
         temp_dir: Path | None = None
         try:
             rvc_input_path = input_path
             if (
-                get_rvc_config("celebrity", celebrity, models_dir=self.rvc_models_dir) is not None
+                use_ai_engines
+                and get_rvc_config("celebrity", celebrity, models_dir=self.rvc_models_dir) is not None
                 and prepared.metrics.get("opencv_spectrogram_applied", 0.0) > 0.0
             ):
                 rvc_input_path, temp_dir = self._write_ai_preprocessed_input(prepared, self.sample_rate, "celebrity")
 
-            rvc_result = convert_file_with_rvc(
-                rvc_input_path,
-                "celebrity",
-                celebrity,
-                self.sample_rate,
-                models_dir=self.rvc_models_dir,
-                device=self.rvc_device,
-            )
+            rvc_result = None
+            if use_ai_engines:
+                rvc_result = convert_file_with_rvc(
+                    rvc_input_path,
+                    "celebrity",
+                    celebrity,
+                    self.sample_rate,
+                    models_dir=self.rvc_models_dir,
+                    device=self.rvc_device,
+                )
             if rvc_result is None:
                 converted = convert_celebrity(prepared.audio, self.sample_rate, celebrity)
+                settings = get_dsp_profile_settings("licensed_profile", profiles_dir=self.dsp_profiles_dir)
+                converted = merge_preserving_noise_regions(
+                    prepared.audio,
+                    converted,
+                    self.sample_rate,
+                    intensity=settings.transform_intensity,
+                    smoothing=settings.formant_smoothing,
+                )
                 rvc_engine = 0.0
             else:
                 converted = rvc_result.audio
@@ -257,8 +339,10 @@ class VoiceConversionPipeline:
                 self._cleanup_temp_dir(temp_dir)
         path = save_audio(output_path or default_output_path(input_path, f"celebrity_{celebrity}"), converted, self.sample_rate)
         metrics = self._build_metrics(source, converted, elapsed)
+        metrics.update(clean.metrics)
         metrics.update(dsp_metrics)
         metrics.update(prepared.metrics)
+        metrics["ai_engines_enabled"] = 1.0 if use_ai_engines else 0.0
         metrics["celebrity_profile"] = float(
             sorted(["adele", "james_earl_jones", "michael_jackson", "morgan_freeman", "taylor_swift"]).index(celebrity)
         )
@@ -381,6 +465,11 @@ class VoiceConversionPipeline:
             "dsp_post_gain_db": float(updated.post_gain_db),
             "dsp_ceiling": float(updated.ceiling),
             "dsp_deess_reduction_db": float(updated.deess_reduction_db),
+            "dsp_noise_gate_floor": float(updated.noise_gate_floor),
+            "dsp_presence_db": float(updated.presence_db),
+            "dsp_spectral_tilt_db": float(updated.spectral_tilt_db),
+            "dsp_transform_intensity": float(updated.transform_intensity),
+            "dsp_formant_smoothing": float(updated.formant_smoothing),
             "dsp_neural_safe_filter": 1.0 if neural_safe_filter else 0.0,
         }
         return filtered, metrics

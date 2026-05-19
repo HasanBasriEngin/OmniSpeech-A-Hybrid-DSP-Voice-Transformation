@@ -107,6 +107,7 @@ pub async fn convert_emotion(
     pitch_override: Option<f64>,
     rate_override: Option<f64>,
     energy_override: Option<f64>,
+    use_ai_engines: Option<bool>,
     output_path: Option<String>,
 ) -> Result<ConversionResponse, String> {
     let payload = json!({
@@ -115,6 +116,7 @@ pub async fn convert_emotion(
         "pitch_override": pitch_override,
         "rate_override": rate_override,
         "energy_override": energy_override,
+        "use_ai_engines": use_ai_engines.unwrap_or(true),
         "output_path": output_path,
     });
     let response = backend::post("/api/convert/emotion", payload).await?;
@@ -125,11 +127,13 @@ pub async fn convert_emotion(
 pub async fn convert_gender_age(
     input_path: String,
     mode: String,
+    use_ai_engines: Option<bool>,
     output_path: Option<String>,
 ) -> Result<ConversionResponse, String> {
     let payload = json!({
         "input_path": input_path,
         "mode": mode,
+        "use_ai_engines": use_ai_engines.unwrap_or(true),
         "output_path": output_path,
     });
     let response = backend::post("/api/convert/gender-age", payload).await?;
@@ -140,11 +144,13 @@ pub async fn convert_gender_age(
 pub async fn convert_speaker_clone(
     input_path: String,
     reference_paths: Vec<String>,
+    use_ai_engines: Option<bool>,
     output_path: Option<String>,
 ) -> Result<ConversionResponse, String> {
     let payload = json!({
         "input_path": input_path,
         "reference_paths": reference_paths,
+        "use_ai_engines": use_ai_engines.unwrap_or(true),
         "output_path": output_path,
     });
     let response = backend::post("/api/convert/speaker-clone", payload).await?;
@@ -156,12 +162,14 @@ pub async fn convert_singing(
     input_path: String,
     midi_path: Option<String>,
     pitch_contour: Option<Vec<f32>>,
+    use_ai_engines: Option<bool>,
     output_path: Option<String>,
 ) -> Result<ConversionResponse, String> {
     let payload = json!({
         "input_path": input_path,
         "midi_path": midi_path,
         "pitch_contour": pitch_contour,
+        "use_ai_engines": use_ai_engines.unwrap_or(true),
         "output_path": output_path,
     });
     let response = backend::post("/api/convert/singing", payload).await?;
@@ -172,15 +180,26 @@ pub async fn convert_singing(
 pub async fn convert_celebrity(
     input_path: String,
     celebrity: String,
+    use_ai_engines: Option<bool>,
     output_path: Option<String>,
 ) -> Result<ConversionResponse, String> {
     let payload = json!({
         "input_path": input_path,
         "celebrity": celebrity,
+        "use_ai_engines": use_ai_engines.unwrap_or(true),
         "output_path": output_path,
     });
     let response = backend::post("/api/convert/celebrity", payload).await?;
     serde_json::from_value(response).map_err(|err| format!("Invalid conversion response: {err}"))
+}
+
+#[tauri::command]
+pub async fn send_dsp_feedback(profile_name: String, feedback: String) -> Result<Value, String> {
+    let payload = json!({
+        "profile_name": profile_name,
+        "feedback": feedback,
+    });
+    backend::post("/api/dsp/feedback", payload).await
 }
 
 #[tauri::command]

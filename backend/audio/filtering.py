@@ -254,6 +254,37 @@ def _deess(audio: np.ndarray, sample_rate: int, *, reduction_db: float = _DESS_R
     return (x - sibilant + sibilant * float(gain)).astype(np.float32)
 
 
+def _noise_gate(audio: np.ndarray, sample_rate: int, *, floor: float) -> np.ndarray:
+    x = _as_mono_float(audio)
+    if x.size < 8 or floor <= 0.0:
+        return x
+    win_samples = max(8, int(sample_rate * 0.018))
+    kernel = np.ones(win_samples, dtype=np.float32) / float(win_samples)
+    envelope = np.sqrt(np.convolve(x * x, kernel, mode="same").clip(min=0.0)).astype(np.float32)
+    threshold = max(float(floor), 1e-5)
+    gate = np.clip((envelope - threshold * 0.5) / max(threshold * 1.5, 1e-6), 0.18, 1.0)
+    if gate.size > 8:
+        smooth = np.ones(9, dtype=np.float32) / 9.0
+        gate = np.convolve(gate, smooth, mode="same").astype(np.float32)
+    return (x * gate).astype(np.float32)
+
+
+def _tone_shape(audio: np.ndarray, sample_rate: int, *, presence_db: float, spectral_tilt_db: float) -> np.ndarray:
+    del sample_rate
+    x = _as_mono_float(audio)
+    if x.size < 16 or (abs(presence_db) < 1e-4 and abs(spectral_tilt_db) < 1e-4):
+        return x
+
+    spec = np.fft.rfft(x)
+    freqs = np.linspace(0.0, 1.0, spec.size, dtype=np.float32)
+    presence_gain = 10.0 ** (float(np.clip(presence_db, -6.0, 6.0)) / 20.0) - 1.0
+    tilt_gain = 10.0 ** (float(np.clip(spectral_tilt_db, -6.0, 6.0)) / 20.0) - 1.0
+    presence = 1.0 + presence_gain * np.exp(-((freqs - 0.34) ** 2) / (2 * 0.07**2))
+    tilt = 1.0 + tilt_gain * np.clip((freqs - 0.22) / 0.78, 0.0, 1.0)
+    curve = np.clip(presence * tilt, 0.25, 2.4)
+    return np.fft.irfft(spec * curve, n=x.size).astype(np.float32)
+
+
 def _settings_float(settings: Mapping[str, object] | None, key: str, default: float, lower: float, upper: float) -> float:
     if settings is None:
         return default
@@ -286,6 +317,9 @@ def apply_post_filter(
     use_pedalboard: bool = True,
     deess_reduction_db: float = _DESS_REDUCTION_DB,
     post_gain_db: float = 0.0,
+    noise_gate_floor: float = 0.0,
+    presence_db: float = 0.0,
+    spectral_tilt_db: float = 0.0,
 ) -> np.ndarray:
     """Apply the shared offline post-processing chain."""
     x = _as_mono_float(audio)
@@ -302,10 +336,14 @@ def apply_post_filter(
 
     if speech_band:
         x = _speech_band_filter(x, sample_rate)
+    if noise_gate_floor > 0.0:
+        x = _noise_gate(x, sample_rate, floor=noise_gate_floor)
     if declick:
         x = _declick(x, sample_rate)
     if deess:
         x = _deess(x, sample_rate, reduction_db=deess_reduction_db)
+    if presence_db or spectral_tilt_db:
+        x = _tone_shape(x, sample_rate, presence_db=presence_db, spectral_tilt_db=spectral_tilt_db)
     if post_gain_db:
         x = (x * float(10.0 ** (post_gain_db / 20.0))).astype(np.float32)
     if soft_limit:
@@ -341,6 +379,9 @@ def post_filter_voice(
         knee_db=_settings_float(settings, "knee_db", _DEFAULT_KNEE_DB, 0.0, 12.0),
         deess_reduction_db=_settings_float(settings, "deess_reduction_db", _DESS_REDUCTION_DB, 0.0, 12.0),
         post_gain_db=_settings_float(settings, "post_gain_db", 0.0, -8.0, 6.0),
+        noise_gate_floor=_settings_float(settings, "noise_gate_floor", 0.0, 0.0, 0.08),
+        presence_db=_settings_float(settings, "presence_db", 0.0, -6.0, 6.0),
+        spectral_tilt_db=_settings_float(settings, "spectral_tilt_db", 0.0, -6.0, 6.0),
     )
 
     if not realtime:

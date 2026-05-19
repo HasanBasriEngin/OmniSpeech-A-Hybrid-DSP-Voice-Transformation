@@ -10,7 +10,7 @@ use commands::{
     backend_health, convert_celebrity, convert_emotion, convert_gender_age, convert_singing, convert_speaker_clone,
     list_virtual_mic_devices,
     pick_audio_file, pick_midi_file, pick_reference_files, process_live_chunk, save_recording_wav, start_backend,
-    start_live_session, stop_backend, stop_live_session,
+    send_dsp_feedback, start_live_session, stop_backend, stop_live_session,
 };
 
 fn main() {
@@ -38,6 +38,7 @@ fn main() {
             convert_speaker_clone,
             convert_singing,
             convert_celebrity,
+            send_dsp_feedback,
             list_virtual_mic_devices,
             start_live_session,
             process_live_chunk,

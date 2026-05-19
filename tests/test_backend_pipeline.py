@@ -10,7 +10,9 @@ import pytest
 import soundfile as sf
 
 from backend.audio.filtering import LiveVoicePostFilter, post_filter_voice
+from backend.audio.dsp_profiles import apply_user_feedback, get_dsp_profile_settings
 from backend.audio.io import normalize_audio
+from backend.audio.pure_dsp import merge_preserving_noise_regions, prepare_clean_speech
 from backend.audio.spectrogram_image import SpectrogramImageResult, preprocess_spectrogram_for_model
 from backend.modules import emotion as emotion_module
 from backend.modules import rvc_adapter
@@ -386,6 +388,202 @@ def test_gender_age_file_uses_rvc_lazily_when_registry_matches(monkeypatch: pyte
     ]
 
 
+def test_rvc_registry_accepts_applio_engine_options():
+    tmp_dir = _workspace_tmp_dir("rvc_applio_config")
+    models_dir = tmp_dir / "rvc"
+    model_dir = models_dir / "female_local"
+    model_dir.mkdir(parents=True)
+    (model_dir / "female_local.pth").write_bytes(b"fake local rvc model")
+    (models_dir / "registry.json").write_text(
+        json.dumps(
+            {
+                "gender_age": {
+                    "male_to_female": {
+                        "model_id": "female_local",
+                        "engine": "applio",
+                        "pitch": 3,
+                        "index_rate": 0.4,
+                        "f0_method": "fcpe",
+                        "volume_envelope": 0.8,
+                        "protect": 0.35,
+                        "split_audio": True,
+                        "f0_autotune": True,
+                        "f0_autotune_strength": 0.5,
+                        "proposed_pitch": True,
+                        "proposed_pitch_threshold": 255.0,
+                        "embedder_model": "contentvec",
+                        "clean_audio": True,
+                        "clean_strength": 0.25,
+                        "applio_root": str(tmp_dir / "applio"),
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    config = rvc_adapter.get_gender_age_rvc_config("male_to_female", models_dir=models_dir)
+
+    assert config is not None
+    assert config.engine == "applio"
+    assert config.f0_method == "fcpe"
+    assert config.volume_envelope == 0.8
+    assert config.protect == 0.35
+    assert config.split_audio is True
+    assert config.f0_autotune is True
+    assert config.f0_autotune_strength == 0.5
+    assert config.proposed_pitch is True
+    assert config.proposed_pitch_threshold == 255.0
+    assert config.clean_audio is True
+    assert config.clean_strength == 0.25
+    assert config.applio_root == (tmp_dir / "applio").resolve()
+
+
+def test_rvc_registry_rejects_unknown_engine():
+    tmp_dir = _workspace_tmp_dir("rvc_bad_engine")
+    models_dir = tmp_dir / "rvc"
+    model_dir = models_dir / "female_local"
+    model_dir.mkdir(parents=True)
+    (model_dir / "female_local.pth").write_bytes(b"fake local rvc model")
+    (models_dir / "registry.json").write_text(
+        json.dumps({"gender_age": {"male_to_female": {"model_id": "female_local", "engine": "mystery"}}}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="Unsupported RVC engine"):
+        rvc_adapter.get_gender_age_rvc_config("male_to_female", models_dir=models_dir)
+
+
+def test_gender_age_file_uses_applio_when_registry_selects_it(monkeypatch: pytest.MonkeyPatch):
+    tmp_dir = _workspace_tmp_dir("rvc_applio")
+    source = _sine(duration=0.25)
+    source_path = tmp_dir / "input.wav"
+    sf.write(str(source_path), source, 22050)
+
+    models_dir = tmp_dir / "rvc"
+    model_dir = models_dir / "female_local"
+    model_dir.mkdir(parents=True)
+    (model_dir / "female_local.pth").write_bytes(b"fake local rvc model")
+    (model_dir / "female_local.index").write_bytes(b"fake local rvc index")
+    (models_dir / "registry.json").write_text(
+        json.dumps(
+            {
+                "gender_age": {
+                    "male_to_female": {
+                        "model_id": "female_local",
+                        "engine": "applio",
+                        "pitch": 4,
+                        "index_rate": 0.45,
+                        "f0_method": "rmvpe",
+                        "protect": 0.3,
+                        "split_audio": True,
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    calls: list[tuple[str, object]] = []
+
+    def fake_preprocess(audio: np.ndarray, sample_rate: int) -> SpectrogramImageResult:
+        del sample_rate
+        return SpectrogramImageResult(
+            audio=np.asarray(audio, dtype=np.float32),
+            metrics={"opencv_spectrogram_applied": 0.0},
+        )
+
+    def fake_convert_file_with_applio(
+        input_path: str | Path,
+        output_path: str | Path,
+        model_path: str | Path,
+        index_path: str | Path | None,
+        **kwargs: object,
+    ) -> None:
+        settings = kwargs["settings"]
+        calls.append(
+            (
+                "applio",
+                (
+                    Path(input_path).name,
+                    Path(model_path).name,
+                    Path(index_path).name if index_path else "",
+                    kwargs["pitch"],
+                    kwargs["index_rate"],
+                    settings.f0_method,
+                    settings.protect,
+                    settings.split_audio,
+                ),
+            )
+        )
+        audio, _ = sf.read(str(input_path), dtype="float32")
+        sf.write(str(output_path), np.asarray(audio, dtype=np.float32) * 0.35, 22050)
+
+    monkeypatch.setattr(processor_module, "preprocess_spectrogram_for_model", fake_preprocess)
+    monkeypatch.setattr(rvc_adapter, "convert_file_with_applio", fake_convert_file_with_applio)
+
+    pipeline = VoiceConversionPipeline(sample_rate=22050, rvc_models_dir=str(models_dir), rvc_device="cpu")
+    result = pipeline.convert_gender_age_file(str(source_path), mode="male_to_female")
+
+    assert result.metrics["rvc_engine"] == 1.0
+    assert calls == [
+        (
+            "applio",
+            ("input.wav", "female_local.pth", "female_local.index", 4, 0.45, "rmvpe", 0.3, True),
+        )
+    ]
+
+
+def test_rvc_auto_falls_back_to_applio_when_rvc_python_is_missing(monkeypatch: pytest.MonkeyPatch):
+    tmp_dir = _workspace_tmp_dir("rvc_auto_applio")
+    source = _sine(duration=0.25)
+    source_path = tmp_dir / "input.wav"
+    sf.write(str(source_path), source, 22050)
+
+    models_dir = tmp_dir / "rvc"
+    model_dir = models_dir / "female_local"
+    model_dir.mkdir(parents=True)
+    (model_dir / "female_local.pth").write_bytes(b"fake local rvc model")
+    (models_dir / "registry.json").write_text(
+        json.dumps({"gender_age": {"male_to_female": {"model_id": "female_local", "engine": "auto"}}}),
+        encoding="utf-8",
+    )
+
+    calls: list[str] = []
+
+    def fake_rvc_python(*args: object, **kwargs: object) -> None:
+        del args, kwargs
+        calls.append("rvc-python")
+        raise RuntimeError("RVC model is configured, but rvc-python is not installed.")
+
+    def fake_applio(
+        input_path: str | Path,
+        output_path: str | Path,
+        *args: object,
+        **kwargs: object,
+    ) -> None:
+        del args, kwargs
+        calls.append("applio")
+        audio, _ = sf.read(str(input_path), dtype="float32")
+        sf.write(str(output_path), np.asarray(audio, dtype=np.float32) * 0.25, 22050)
+
+    monkeypatch.setattr(rvc_adapter, "_infer_file_with_rvc_python", fake_rvc_python)
+    monkeypatch.setattr(rvc_adapter, "is_applio_available", lambda applio_root=None: True)
+    monkeypatch.setattr(rvc_adapter, "convert_file_with_applio", fake_applio)
+
+    result = rvc_adapter.convert_gender_age_with_rvc(
+        str(source_path),
+        "male_to_female",
+        22050,
+        models_dir=models_dir,
+        device="cpu",
+    )
+
+    assert result is not None
+    assert result.engine == "applio"
+    assert calls == ["rvc-python", "applio"]
+
+
 def test_gender_age_file_uses_freevc_reference_profile_when_configured(monkeypatch: pytest.MonkeyPatch):
     tmp_dir = _workspace_tmp_dir("freevc_gender")
     source = _sine(duration=0.25)
@@ -651,6 +849,130 @@ def test_celebrity_file_uses_rvc_lazily_when_registry_matches(monkeypatch: pytes
     ]
 
 
+def test_gender_age_file_can_force_pure_dsp_even_when_ai_profiles_exist(monkeypatch: pytest.MonkeyPatch):
+    tmp_dir = _workspace_tmp_dir("pure_dsp_gender")
+    source = _sine(duration=0.25)
+    source_path = tmp_dir / "input.wav"
+    sf.write(str(source_path), source, 22050)
+
+    models_dir = tmp_dir / "rvc"
+    model_dir = models_dir / "female_local"
+    model_dir.mkdir(parents=True)
+    (model_dir / "female_local.pth").write_bytes(b"fake local rvc model")
+    (models_dir / "registry.json").write_text(
+        json.dumps({"gender_age": {"male_to_female": {"model_id": "female_local"}}}),
+        encoding="utf-8",
+    )
+
+    profiles_dir = tmp_dir / "freevc_profiles"
+    references_dir = profiles_dir / "references"
+    references_dir.mkdir(parents=True)
+    reference_path = references_dir / "female_reference.wav"
+    sf.write(str(reference_path), source * 0.5, 22050)
+    (profiles_dir / "registry.json").write_text(
+        json.dumps(
+            {
+                "gender_age": {
+                    "male_to_female": {
+                        "profile_id": "female_reference",
+                        "reference_path": "references/female_reference.wav",
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    calls: list[str] = []
+
+    def fail_rvc(*args: object, **kwargs: object) -> None:
+        del args, kwargs
+        calls.append("rvc")
+        raise AssertionError("RVC should be skipped in pure DSP mode")
+
+    def fail_freevc(*args: object, **kwargs: object) -> None:
+        del args, kwargs
+        calls.append("freevc")
+        raise AssertionError("FreeVC should be skipped in pure DSP mode")
+
+    monkeypatch.setattr(processor_module, "convert_gender_age_with_rvc", fail_rvc)
+    monkeypatch.setattr(processor_module, "convert_file_with_freevc", fail_freevc)
+
+    pipeline = VoiceConversionPipeline(
+        sample_rate=22050,
+        rvc_models_dir=str(models_dir),
+        freevc_profiles_dir=str(profiles_dir),
+    )
+    result = pipeline.convert_gender_age_file(str(source_path), mode="male_to_female", use_ai_engines=False)
+
+    assert calls == []
+    assert result.metrics["ai_engines_enabled"] == 0.0
+    assert result.metrics["rvc_engine"] == 0.0
+    assert result.metrics["freevc_engine"] == 0.0
+
+
+def test_speaker_clone_file_can_force_pure_dsp_even_with_references(monkeypatch: pytest.MonkeyPatch):
+    tmp_dir = _workspace_tmp_dir("pure_dsp_speaker")
+    source = _sine(duration=0.25)
+    source_path = tmp_dir / "input.wav"
+    reference_path = tmp_dir / "reference.wav"
+    sf.write(str(source_path), source, 22050)
+    sf.write(str(reference_path), source * 0.7, 22050)
+
+    calls: list[str] = []
+
+    def fail_freevc(*args: object, **kwargs: object) -> None:
+        del args, kwargs
+        calls.append("freevc")
+        raise AssertionError("FreeVC should be skipped in pure DSP mode")
+
+    monkeypatch.setattr(processor_module, "convert_file_with_freevc", fail_freevc)
+
+    pipeline = VoiceConversionPipeline(sample_rate=22050, dsp_profiles_dir=str(tmp_dir / "dsp_profiles"))
+    result = pipeline.convert_speaker_clone_file(
+        str(source_path),
+        [str(reference_path)],
+        use_ai_engines=False,
+    )
+
+    assert calls == []
+    assert result.metrics["ai_engines_enabled"] == 0.0
+    assert result.metrics["freevc_engine"] == 0.0
+    assert result.metrics["reference_count"] == 1.0
+
+
+def test_celebrity_file_can_force_pure_dsp_even_when_rvc_profile_exists(monkeypatch: pytest.MonkeyPatch):
+    tmp_dir = _workspace_tmp_dir("pure_dsp_celebrity")
+    source = _sine(duration=0.25)
+    source_path = tmp_dir / "input.wav"
+    sf.write(str(source_path), source, 22050)
+
+    models_dir = tmp_dir / "rvc"
+    model_dir = models_dir / "licensed_profile_local"
+    model_dir.mkdir(parents=True)
+    (model_dir / "licensed_profile_local.pth").write_bytes(b"fake local rvc model")
+    (models_dir / "registry.json").write_text(
+        json.dumps({"celebrity": {"michael_jackson": {"model_id": "licensed_profile_local"}}}),
+        encoding="utf-8",
+    )
+
+    calls: list[str] = []
+
+    def fail_rvc(*args: object, **kwargs: object) -> None:
+        del args, kwargs
+        calls.append("rvc")
+        raise AssertionError("RVC should be skipped in pure DSP mode")
+
+    monkeypatch.setattr(processor_module, "convert_file_with_rvc", fail_rvc)
+
+    pipeline = VoiceConversionPipeline(sample_rate=22050, rvc_models_dir=str(models_dir), rvc_device="cpu")
+    result = pipeline.convert_celebrity_file(str(source_path), celebrity="michael_jackson", use_ai_engines=False)
+
+    assert calls == []
+    assert result.metrics["ai_engines_enabled"] == 0.0
+    assert result.metrics["rvc_engine"] == 0.0
+
+
 def test_gender_age_rvc_registry_missing_model_is_explicit():
     tmp_dir = _workspace_tmp_dir("rvc_missing")
     source_path = tmp_dir / "input.wav"
@@ -729,6 +1051,43 @@ def test_normalize_audio_rms_mode_hits_target_level():
     rms = float(np.sqrt(np.mean(normalized**2)))
 
     assert np.isclose(rms, 0.1, atol=1e-4)
+
+
+def test_pure_dsp_clean_chain_removes_dc_and_limits_spikes():
+    sr = 22050
+    source = _sine(sr=sr, duration=0.35) + 0.18
+    source[source.size // 2] = 1.7
+
+    result = prepare_clean_speech(source, sr)
+
+    assert result.metrics["pure_dsp_input_cleaned"] == 1.0
+    assert abs(float(np.mean(result.audio))) < abs(float(np.mean(source)))
+    assert float(np.max(np.abs(result.audio))) <= 0.95
+    assert result.metrics["pure_dsp_voiced_ratio"] > 0.0
+
+
+def test_pure_dsp_merge_protects_silence_regions():
+    sr = 22050
+    voiced = _sine(sr=sr, duration=0.25)
+    source = np.concatenate([np.zeros(sr // 10, dtype=np.float32), voiced])
+    converted = np.full(source.size, 0.8, dtype=np.float32)
+
+    merged = merge_preserving_noise_regions(source, converted, sr)
+
+    assert float(np.max(np.abs(merged[: sr // 12]))) < 0.35
+    assert float(np.max(np.abs(merged[-sr // 12 :]))) > 0.2
+
+
+def test_user_feedback_updates_dsp_profile_settings():
+    tmp_dir = _workspace_tmp_dir("dsp_feedback")
+
+    before = get_dsp_profile_settings("gender_age", tmp_dir)
+    after = apply_user_feedback("gender_age", "robotic", profiles_dir=tmp_dir)
+
+    registry = json.loads((tmp_dir / "registry.json").read_text(encoding="utf-8"))
+    assert after.transform_intensity < before.transform_intensity
+    assert after.formant_smoothing > before.formant_smoothing
+    assert registry["profiles"]["gender_age"]["feedback_counts"]["robotic"] == 1
 
 
 def test_live_chunk_processing_without_virtual_mic():

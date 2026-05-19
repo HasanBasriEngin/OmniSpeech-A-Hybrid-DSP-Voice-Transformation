@@ -1,0 +1,13 @@
+-r requirements-ai.txt
+
+# Optional Applio RVC bridge dependencies.
+# Install these only when OMNISPEECH_RVC_ENGINE=applio, or when using auto
+# fallback with a local Applio checkout under vendor/applio.
+faiss-cpu>=1.7.4
+soxr>=0.5.0
+torchcrepe>=0.0.23
+torchfcpe>=0.0.4
+einops>=0.7.0
+wget>=3.2
+stftpitchshift>=1.5.1
+torchaudio>=2.0
