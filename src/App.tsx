@@ -480,14 +480,22 @@ export default function App() {
               : "gender_age",
     [activeModule],
   );
-  const dspProfileName = useMemo(() => (activeTask === "celebrity" ? "licensed_profile" : activeTask), [activeTask]);
+  const dspProfileName = useMemo(() => {
+    if (activeTask === "emotion") return `emotion.${selectedEmotion}`;
+    if (activeTask === "gender_age") return `gender_age.${selectedGenderMode}`;
+    if (activeTask === "celebrity") return `licensed_profile.${selectedCelebrity}`;
+    if (activeTask === "speaker_clone") return `speaker_clone.${referenceFiles.length ? "reference" : "identity"}`;
+    return `singing.${midiFile ? "midi" : "manual"}`;
+  }, [activeTask, midiFile, referenceFiles.length, selectedCelebrity, selectedEmotion, selectedGenderMode]);
 
   const metricValues = useMemo(() => {
     const processingSeconds = metrics.processing_seconds ?? 1.4;
     const latencyMs = Math.max(1, Math.round(processingSeconds * 1000));
     const fidelity = metrics.snr_estimate_db ? Math.max(1, Math.min(5, metrics.snr_estimate_db / 8.5 + 2.2)) : 4.2;
     const intelligibility = metrics.output_median_f0 ? Math.max(1, Math.min(5, 3.2 + Math.abs((metrics.output_median_f0 - (metrics.input_median_f0 ?? 0)) / 400))) : 3.8;
-    return { latencyMs, processingSeconds, fidelity, intelligibility };
+    const artifactScore = Math.max(0, Math.min(100, Math.round((metrics.post_artifact_score ?? 0) * 100)));
+    const pitchStability = Math.max(0, Math.min(100, Math.round((metrics.post_pitch_stability ?? 1) * 100)));
+    return { latencyMs, processingSeconds, fidelity, intelligibility, artifactScore, pitchStability };
   }, [metrics]);
 
   const redraw = () => {
@@ -1412,6 +1420,8 @@ export default function App() {
           <div className="metric-card ok"><div className="metric-label">İŞLEM SÜRESİ</div><div className="metric-val">{metricValues.processingSeconds.toFixed(2)} <span>s</span></div></div>
           <div className="metric-card"><div className="metric-label">DOĞRULUK</div><div className="metric-val">{metricValues.fidelity.toFixed(1)} <span>/5</span></div></div>
           <div className="metric-card ok"><div className="metric-label">ANLAŞILIRLIK</div><div className="metric-val">{metricValues.intelligibility.toFixed(1)} <span>/5</span></div></div>
+          <div className={`metric-card ${metricValues.artifactScore <= 24 ? "ok" : ""}`}><div className="metric-label">ARTIFACT</div><div className="metric-val">{metricValues.artifactScore} <span>%</span></div></div>
+          <div className={`metric-card ${metricValues.pitchStability >= 72 ? "ok" : ""}`}><div className="metric-label">PITCH STAB</div><div className="metric-val">{metricValues.pitchStability} <span>%</span></div></div>
         </section>
       </main>
 

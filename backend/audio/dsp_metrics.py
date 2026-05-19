@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 from scipy import signal
 
-from backend.audio.features import extract_pitch_contour
+from backend.audio.voice_analysis import analyze_pitch_confidence
 
 
 def _safe_mono_float(audio: np.ndarray) -> np.ndarray:
@@ -56,8 +56,8 @@ def _spectral_flatness(audio: np.ndarray) -> float:
 
 
 def _pitch_stability(audio: np.ndarray, sample_rate: int) -> float:
-    contour = extract_pitch_contour(audio, sample_rate)
-    voiced = contour[contour > 0]
+    track = analyze_pitch_confidence(audio, sample_rate)
+    voiced = track.f0_hz[(track.f0_hz > 0) & (track.confidence >= 0.35)]
     if voiced.size < 2:
         return 1.0
     median = float(np.median(voiced))
@@ -65,6 +65,44 @@ def _pitch_stability(audio: np.ndarray, sample_rate: int) -> float:
         return 1.0
     variation = float(np.std(voiced) / median)
     return float(np.clip(1.0 - variation, 0.0, 1.0))
+
+
+def _artifact_scores(
+    *,
+    clipping_ratio: float,
+    sibilance_ratio: float,
+    harshness_ratio: float,
+    noise_floor_ratio: float,
+    spectral_flatness: float,
+    pitch_stability: float,
+) -> dict[str, float]:
+    clipping_score = min(1.0, clipping_ratio / 0.004)
+    sibilance_score = float(np.clip((sibilance_ratio - 0.24) / 0.5, 0.0, 1.0))
+    harsh_score = float(np.clip((harshness_ratio - 0.34) / 0.55, 0.0, 1.0))
+    noise_score = float(np.clip((noise_floor_ratio - 0.08) / 0.22, 0.0, 1.0))
+    metallic_score = float(np.clip((spectral_flatness - 0.28) / 0.42, 0.0, 1.0))
+    pitch_score = float(np.clip((0.76 - pitch_stability) / 0.5, 0.0, 1.0))
+    total = float(
+        np.clip(
+            0.24 * clipping_score
+            + 0.18 * sibilance_score
+            + 0.18 * harsh_score
+            + 0.16 * noise_score
+            + 0.14 * metallic_score
+            + 0.10 * pitch_score,
+            0.0,
+            1.0,
+        )
+    )
+    return {
+        "artifact_score": total,
+        "artifact_clipping_score": clipping_score,
+        "artifact_sibilance_score": sibilance_score,
+        "artifact_harsh_score": harsh_score,
+        "artifact_noise_score": noise_score,
+        "artifact_metallic_score": metallic_score,
+        "artifact_pitch_score": pitch_score,
+    }
 
 
 def measure_audio_health(audio: np.ndarray, sample_rate: int, *, prefix: str = "") -> dict[str, float]:
@@ -98,6 +136,14 @@ def measure_audio_health(audio: np.ndarray, sample_rate: int, *, prefix: str = "
     noise_floor_ratio = _noise_floor_ratio(x, sample_rate, rms)
     spectral_flatness = _spectral_flatness(x)
     pitch_stability = _pitch_stability(x, sample_rate)
+    artifacts = _artifact_scores(
+        clipping_ratio=clipping_ratio,
+        sibilance_ratio=sibilance_ratio,
+        harshness_ratio=harshness_ratio,
+        noise_floor_ratio=noise_floor_ratio,
+        spectral_flatness=spectral_flatness,
+        pitch_stability=pitch_stability,
+    )
 
     return {
         f"{prefix}peak": round(peak, 6),
@@ -110,4 +156,5 @@ def measure_audio_health(audio: np.ndarray, sample_rate: int, *, prefix: str = "
         f"{prefix}spectral_flatness": round(spectral_flatness, 6),
         f"{prefix}harshness_ratio": round(harshness_ratio, 6),
         f"{prefix}pitch_stability": round(pitch_stability, 6),
+        **{f"{prefix}{key}": round(value, 6) for key, value in artifacts.items()},
     }

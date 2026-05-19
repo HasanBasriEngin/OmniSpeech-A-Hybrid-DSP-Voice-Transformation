@@ -72,15 +72,24 @@ def _bool_setting(raw: Any, default: bool) -> bool:
     return default
 
 
+def _profile_settings_dict(profile: Any) -> dict[str, Any]:
+    if not isinstance(profile, dict):
+        return {}
+    settings = profile.get("settings", {})
+    return dict(settings) if isinstance(settings, dict) else {}
+
+
 def get_dsp_profile_settings(
     profile_name: str,
     profiles_dir: str | os.PathLike[str] | None = None,
 ) -> DSPProfileSettings:
     registry = load_dsp_profile_registry(profiles_dir)
-    profile = registry.get("profiles", {}).get(profile_name, {})
-    settings = profile.get("settings", {}) if isinstance(profile, dict) else {}
-    if not isinstance(settings, dict):
-        settings = {}
+    profiles = registry.get("profiles", {})
+    settings: dict[str, Any] = {}
+    if "." in profile_name:
+        parent_name = profile_name.split(".", 1)[0]
+        settings.update(_profile_settings_dict(profiles.get(parent_name) if isinstance(profiles, dict) else {}))
+    settings.update(_profile_settings_dict(profiles.get(profile_name) if isinstance(profiles, dict) else {}))
 
     defaults = DSPProfileSettings()
     return DSPProfileSettings(
@@ -241,6 +250,7 @@ def update_dsp_profile(
 
     profile.update(
         {
+            "parent_profile": profile_name.split(".", 1)[0] if "." in profile_name else None,
             "settings": updated.as_filter_settings(),
             "updated_from_runs": runs,
             "metrics_ema": metrics_ema,
@@ -248,6 +258,30 @@ def update_dsp_profile(
             "updated_at": datetime.now(UTC).isoformat(),
         }
     )
+
+    if "." in profile_name:
+        parent_name = profile_name.split(".", 1)[0]
+        parent_profile = profiles.setdefault(parent_name, {})
+        if not isinstance(parent_profile, dict):
+            parent_profile = {}
+            profiles[parent_name] = parent_profile
+        parent_runs = int(parent_profile.get("updated_from_runs", 0)) + 1
+        parent_metrics_ema = parent_profile.get("metrics_ema", {})
+        if not isinstance(parent_metrics_ema, dict):
+            parent_metrics_ema = {}
+        for key, value in {**pre_metrics, **post_metrics}.items():
+            if isinstance(value, (int, float)):
+                previous = parent_metrics_ema.get(key)
+                parent_metrics_ema[key] = round(_ema(previous if isinstance(previous, (int, float)) else None, float(value)), 6)
+        parent_profile.update(
+            {
+                "updated_from_runs": parent_runs,
+                "metrics_ema": parent_metrics_ema,
+                "last_engine": engine,
+                "last_child_profile": profile_name,
+                "updated_at": datetime.now(UTC).isoformat(),
+            }
+        )
 
     registry_path = _registry_path(profiles_dir)
     registry_path.parent.mkdir(parents=True, exist_ok=True)
@@ -283,6 +317,7 @@ def apply_user_feedback(
 
     profile.update(
         {
+            "parent_profile": profile_name.split(".", 1)[0] if "." in profile_name else None,
             "settings": updated.as_filter_settings(),
             "feedback_counts": counts,
             "last_feedback": feedback_key,

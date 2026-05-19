@@ -7,6 +7,7 @@ from scipy import signal
 
 from backend.audio.features import stretch_to_length
 from backend.audio.filtering import apply_post_filter
+from backend.audio.voice_analysis import analyze_pitch_confidence, confidence_to_sample_mask
 
 
 @dataclass(frozen=True)
@@ -92,9 +93,13 @@ def analyze_speech_regions(audio: np.ndarray, sample_rate: int) -> SpeechRegionM
         active_threshold = max(noise_floor * 2.15, global_rms * 0.16, 1e-4)
     active = rms > active_threshold
 
+    pitch_track = analyze_pitch_confidence(x, sample_rate)
+    f0_voiced = confidence_to_sample_mask(pitch_track, x.size, threshold=0.34) > 0.35
+
     low_mid = _band_envelope(x, sample_rate, 85.0, 3_400.0)
     fricative = _band_envelope(x, sample_rate, 3_800.0, 9_500.0)
-    voiced = active & (low_mid > fricative * 0.72) & (low_mid > global_rms * 0.08)
+    tonal_voiced = (low_mid > fricative * 0.72) & (low_mid > global_rms * 0.08)
+    voiced = active & (tonal_voiced | f0_voiced)
     unvoiced = active & ~voiced
     silence = ~active
 

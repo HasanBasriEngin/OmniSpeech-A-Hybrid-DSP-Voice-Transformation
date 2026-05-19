@@ -11,10 +11,13 @@ import soundfile as sf
 
 from backend.audio.filtering import LiveVoicePostFilter, post_filter_voice
 from backend.audio.dsp_profiles import apply_user_feedback, get_dsp_profile_settings
+from backend.audio.dsp_metrics import measure_audio_health
 from backend.audio.io import normalize_audio
 from backend.audio.pure_dsp import merge_preserving_noise_regions, prepare_clean_speech
 from backend.audio.spectrogram_image import SpectrogramImageResult, preprocess_spectrogram_for_model
+from backend.audio.voice_analysis import analyze_pitch_confidence
 from backend.modules import emotion as emotion_module
+from backend.modules import gender_age as gender_age_module
 from backend.modules import rvc_adapter
 from backend.modules.freevc_adapter import (
     FreeVCConversionResult,
@@ -1088,6 +1091,72 @@ def test_user_feedback_updates_dsp_profile_settings():
     assert after.transform_intensity < before.transform_intensity
     assert after.formant_smoothing > before.formant_smoothing
     assert registry["profiles"]["gender_age"]["feedback_counts"]["robotic"] == 1
+
+
+def test_submodule_dsp_profile_inherits_parent_settings():
+    tmp_dir = _workspace_tmp_dir("dsp_subprofile_inherit")
+    (tmp_dir / "registry.json").write_text(
+        json.dumps(
+            {
+                "profiles": {
+                    "gender_age": {"settings": {"presence_db": 1.25, "transform_intensity": 0.82}},
+                    "gender_age.male_to_female": {"settings": {"transform_intensity": 0.63}},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    settings = get_dsp_profile_settings("gender_age.male_to_female", tmp_dir)
+
+    assert settings.presence_db == 1.25
+    assert settings.transform_intensity == 0.63
+
+
+def test_pipeline_updates_submodule_dsp_profile():
+    tmp_dir = _workspace_tmp_dir("dsp_subprofile_update")
+    source_path = tmp_dir / "input.wav"
+    sf.write(str(source_path), _sine(duration=0.35), 22050)
+
+    pipeline = VoiceConversionPipeline(
+        sample_rate=22050,
+        rvc_models_dir=str(tmp_dir / "rvc"),
+        dsp_profiles_dir=str(tmp_dir / "dsp_profiles"),
+    )
+    result = pipeline.convert_gender_age_file(str(source_path), mode="male_to_female", use_ai_engines=False)
+
+    registry = json.loads((tmp_dir / "dsp_profiles" / "registry.json").read_text(encoding="utf-8"))
+    assert "gender_age.male_to_female" in registry["profiles"]
+    assert registry["profiles"]["gender_age.male_to_female"]["parent_profile"] == "gender_age"
+    assert result.metrics["dsp_profile_updated"] == 1.0
+
+
+def test_pitch_confidence_tracks_voiced_sine():
+    track = analyze_pitch_confidence(_sine(duration=0.45), 22050)
+    voiced = track.f0_hz[(track.f0_hz > 0) & (track.confidence >= 0.25)]
+
+    assert voiced.size > 0
+    assert 170.0 <= float(np.median(voiced)) <= 270.0
+
+
+def test_artifact_metrics_expose_scores():
+    sr = 22050
+    source = _sine(sr=sr, duration=0.35)
+    source[source.size // 3] = 1.0
+
+    metrics = measure_audio_health(source, sr, prefix="post_")
+
+    assert "post_artifact_score" in metrics
+    assert 0.0 <= metrics["post_artifact_score"] <= 1.0
+    assert "post_artifact_pitch_score" in metrics
+
+
+def test_gender_age_cepstral_formant_warp_keeps_finite_output():
+    converted = gender_age_module.convert_gender_age(_sine(duration=0.35), 22050, "male_to_female")
+
+    assert converted.dtype == np.float32
+    assert np.all(np.isfinite(converted))
+    assert converted.size > 0
 
 
 def test_live_chunk_processing_without_virtual_mic():

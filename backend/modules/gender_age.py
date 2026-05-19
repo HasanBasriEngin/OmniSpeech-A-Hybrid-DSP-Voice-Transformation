@@ -184,6 +184,33 @@ def _soft_compress(audio: np.ndarray, drive: float = 1.18) -> np.ndarray:
     return np.tanh(x * drive).astype(np.float32)
 
 
+def _cepstral_formant_envelope_warp(audio: np.ndarray, sample_rate: int, warp_factor: float, amount: float = 0.42) -> np.ndarray:
+    del sample_rate
+    x = np.asarray(audio, dtype=np.float32)
+    if x.size < 256 or abs(warp_factor - 1.0) < 1e-4:
+        return x
+
+    spectrum = np.fft.rfft(x)
+    magnitude = np.abs(spectrum).astype(np.float32) + 1e-7
+    phase = np.angle(spectrum)
+    log_mag = np.log(magnitude)
+    cepstrum = np.fft.irfft(log_mag, n=(magnitude.size - 1) * 2).astype(np.float32)
+
+    lifter = max(10, min(52, cepstrum.size // 18))
+    smooth_cepstrum = np.zeros_like(cepstrum)
+    smooth_cepstrum[:lifter] = cepstrum[:lifter]
+    smooth_cepstrum[-lifter + 1 :] = cepstrum[-lifter + 1 :]
+    envelope = np.exp(np.fft.rfft(smooth_cepstrum).real).astype(np.float32)
+    detail = magnitude / np.maximum(envelope, 1e-7)
+
+    idx = np.arange(envelope.size, dtype=np.float32)
+    source_idx = np.clip(idx / max(float(warp_factor), 1e-4), 0.0, envelope.size - 1.0)
+    warped_envelope = np.interp(source_idx, idx, envelope).astype(np.float32)
+    blended_envelope = envelope * (1.0 - amount) + warped_envelope * amount
+    rebuilt = np.clip(blended_envelope * detail, 1e-7, np.max(magnitude) * 3.0)
+    return np.fft.irfft(rebuilt * np.exp(1j * phase), n=x.size).astype(np.float32)
+
+
 def _add_chest_resonance(audio: np.ndarray, sample_rate: int, amount: float) -> np.ndarray:
     """
     Göğüs rezonansı vurgusu — erkek sesine daha derin ve dolgun tını verir.
@@ -320,6 +347,7 @@ def convert_gender_age(audio: np.ndarray, sample_rate: int, mode: str) -> np.nda
     with torch.no_grad():
         tensor = torch.from_numpy(np.asarray(pitched, dtype=np.float32))
         warped = WARP_MODEL(tensor, preset["warp"]).cpu().numpy().astype(np.float32)
+    warped = _cepstral_formant_envelope_warp(warped, sample_rate, preset["warp"])
 
     # 3. Ton şekillendirme (brightness / warmth)
     shaped = _fft_tone_shape(warped, brightness=preset["brightness"], warmth=preset["warmth"])
