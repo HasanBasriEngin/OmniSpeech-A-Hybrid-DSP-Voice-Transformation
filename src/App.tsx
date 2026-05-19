@@ -418,6 +418,7 @@ export default function App() {
 
   const [backendReady, setBackendReady] = useState(false);
   const [isConverting, setIsConverting] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
   const [useAiEngines, setUseAiEngines] = useState(false);
   const [feedbackPending, setFeedbackPending] = useState<QualityFeedbackKey | null>(null);
   const [lastFeedback, setLastFeedback] = useState<QualityFeedbackKey | null>(null);
@@ -495,7 +496,10 @@ export default function App() {
     const intelligibility = metrics.output_median_f0 ? Math.max(1, Math.min(5, 3.2 + Math.abs((metrics.output_median_f0 - (metrics.input_median_f0 ?? 0)) / 400))) : 3.8;
     const artifactScore = Math.max(0, Math.min(100, Math.round((metrics.post_artifact_score ?? 0) * 100)));
     const pitchStability = Math.max(0, Math.min(100, Math.round((metrics.post_pitch_stability ?? 1) * 100)));
-    return { latencyMs, processingSeconds, fidelity, intelligibility, artifactScore, pitchStability };
+    const spectrogramScore = Math.max(0, Math.min(100, Math.round((metrics.post_spectrogram_artifact_score ?? 0) * 100)));
+    const optimizerCandidates = Math.max(0, Math.round(metrics.dsp_quality_candidates ?? 0));
+    const optimizerImprovement = Math.max(0, Math.min(100, Math.round((metrics.dsp_quality_score_improvement ?? 0) * 100)));
+    return { latencyMs, processingSeconds, fidelity, intelligibility, artifactScore, pitchStability, spectrogramScore, optimizerCandidates, optimizerImprovement };
   }, [metrics]);
 
   const redraw = () => {
@@ -975,6 +979,27 @@ export default function App() {
     }
   };
 
+  const exportOutput = async () => {
+    if (!outputPath) {
+      addLog("Export icin once cikti olustur", true);
+      return;
+    }
+
+    setIsExporting(true);
+    try {
+      const exportedPath = await api.exportAudioFile(outputPath);
+      if (exportedPath) {
+        addLog(`Cikti export edildi: ${basename(exportedPath)}`);
+      } else {
+        addLog("Export iptal edildi");
+      }
+    } catch (err) {
+      addLog(`Export basarisiz: ${normalizeError(err)}`, true);
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
   const seekTo = (event: MouseEvent<HTMLDivElement>) => {
     const rect = event.currentTarget.getBoundingClientRect();
     const next = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
@@ -1178,6 +1203,9 @@ export default function App() {
                   <button className={`btn-xs ${inputMode === "mic" ? "active" : ""}`} onClick={() => setInputMode("mic")} type="button">
                     MİK
                   </button>
+                  <button className={`btn-xs ${outputPath ? "export-active" : ""}`} disabled={!outputPath || isExporting} onClick={() => void exportOutput()} type="button">
+                    {isExporting ? "..." : "EXPORT"}
+                  </button>
                 </div>
               </div>
 
@@ -1286,6 +1314,18 @@ export default function App() {
                 </div>
               </div>
 
+              {outputPath ? (
+                <div className="output-export-bar">
+                  <div className="output-export-copy">
+                    <span className="selection-label">Cikti Hazir</span>
+                    <span className="selection-value">{basename(outputPath)}</span>
+                  </div>
+                  <button className="output-export-btn" disabled={isExporting} onClick={() => void exportOutput()} type="button">
+                    {isExporting ? "Export ediliyor..." : "Ciktiyi Export Et"}
+                  </button>
+                </div>
+              ) : null}
+
               <div className="waveform-area">
                 <div className="waveform-label">orijinal</div>
                 <div className="waveform-label right">{playbackDuration.toFixed(1)}s</div>
@@ -1308,6 +1348,9 @@ export default function App() {
                   </div>
                 </div>
                 <span className="time-text">{formatTime(progress * playbackDuration)} / {formatTime(playbackDuration)}</span>
+                <button className="export-btn" disabled={!outputPath || isExporting} onClick={() => void exportOutput()} type="button">
+                  {isExporting ? "..." : "Export"}
+                </button>
                 <audio
                   onEnded={() => { setPlaying(false); setProgress(1); }}
                   onLoadedMetadata={(event) => {
@@ -1421,7 +1464,9 @@ export default function App() {
           <div className="metric-card"><div className="metric-label">DOĞRULUK</div><div className="metric-val">{metricValues.fidelity.toFixed(1)} <span>/5</span></div></div>
           <div className="metric-card ok"><div className="metric-label">ANLAŞILIRLIK</div><div className="metric-val">{metricValues.intelligibility.toFixed(1)} <span>/5</span></div></div>
           <div className={`metric-card ${metricValues.artifactScore <= 24 ? "ok" : ""}`}><div className="metric-label">ARTIFACT</div><div className="metric-val">{metricValues.artifactScore} <span>%</span></div></div>
+          <div className={`metric-card ${metricValues.spectrogramScore <= 24 ? "ok" : ""}`}><div className="metric-label">SPEC</div><div className="metric-val">{metricValues.spectrogramScore}<span>%</span></div></div>
           <div className={`metric-card ${metricValues.pitchStability >= 72 ? "ok" : ""}`}><div className="metric-label">PITCH STAB</div><div className="metric-val">{metricValues.pitchStability} <span>%</span></div></div>
+          <div className={`metric-card ${metricValues.optimizerCandidates > 0 ? "ok" : ""}`}><div className="metric-label">AUTO OPT</div><div className="metric-val">{metricValues.optimizerImprovement}<span>%</span></div></div>
         </section>
       </main>
 
@@ -1573,6 +1618,9 @@ export default function App() {
 
         <button className="convert-btn" disabled={Boolean(convertBlockedReason) || isConverting} onClick={() => void runConvert()} type="button">
           {convertButtonLabel}
+        </button>
+        <button className="export-action-btn" disabled={!outputPath || isExporting} onClick={() => void exportOutput()} type="button">
+          {isExporting ? "Export ediliyor..." : "Ciktiyi Export Et"}
         </button>
 
         <div>

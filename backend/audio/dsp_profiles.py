@@ -133,6 +133,12 @@ def _next_settings(settings: DSPProfileSettings, post_metrics: dict[str, float])
     harshness = float(post_metrics.get("post_harshness_ratio", 0.0))
     flatness = float(post_metrics.get("post_spectral_flatness", 0.0))
     pitch_stability = float(post_metrics.get("post_pitch_stability", 1.0))
+    spec_sibilance = float(post_metrics.get("post_spectrogram_sibilance_spike_score", 0.0))
+    spec_harsh = float(post_metrics.get("post_spectrogram_harsh_spike_score", 0.0))
+    spec_noise = float(post_metrics.get("post_spectrogram_high_noise_score", 0.0))
+    spec_metallic = float(post_metrics.get("post_spectrogram_metallic_score", 0.0))
+    spec_muffled = float(post_metrics.get("post_spectrogram_muffled_score", 0.0))
+    spec_rumble = float(post_metrics.get("post_spectrogram_rumble_score", 0.0))
 
     post_gain_db = settings.post_gain_db
     ceiling = settings.ceiling
@@ -170,6 +176,30 @@ def _next_settings(settings: DSPProfileSettings, post_metrics: dict[str, float])
     if pitch_stability < 0.68:
         transform_intensity -= 0.025
         formant_smoothing += 0.04
+
+    if spec_sibilance > 0.35:
+        deess_reduction_db += 0.45
+        spectral_tilt_db -= 0.1
+
+    if spec_harsh > 0.35:
+        presence_db -= 0.25
+        spectral_tilt_db -= 0.12
+
+    if spec_noise > 0.35:
+        noise_gate_floor += 0.0015
+        deess_reduction_db += 0.2
+
+    if spec_metallic > 0.32:
+        transform_intensity -= 0.018
+        formant_smoothing += 0.035
+
+    if spec_muffled > 0.42 and spec_harsh < 0.2 and spec_sibilance < 0.2:
+        presence_db += 0.25
+        spectral_tilt_db += 0.16
+
+    if spec_rumble > 0.35:
+        post_gain_db -= 0.1
+        noise_gate_floor += 0.001
 
     return DSPProfileSettings(
         post_gain_db=round(float(min(max(post_gain_db, -8.0), 6.0)), 3),
@@ -228,6 +258,7 @@ def update_dsp_profile(
     post_metrics: dict[str, float],
     engine: str,
     profiles_dir: str | os.PathLike[str] | None = None,
+    base_settings: DSPProfileSettings | None = None,
 ) -> DSPProfileSettings:
     registry = load_dsp_profile_registry(profiles_dir)
     profiles = registry.setdefault("profiles", {})
@@ -236,7 +267,7 @@ def update_dsp_profile(
         profile = {}
         profiles[profile_name] = profile
 
-    current = get_dsp_profile_settings(profile_name, profiles_dir)
+    current = base_settings or get_dsp_profile_settings(profile_name, profiles_dir)
     updated = _next_settings(current, post_metrics)
 
     runs = int(profile.get("updated_from_runs", 0)) + 1

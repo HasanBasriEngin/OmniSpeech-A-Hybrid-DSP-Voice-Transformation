@@ -14,6 +14,7 @@ export const api = {
   pickReferenceFiles: () => tauriOnly<string[]>("pick_reference_files"),
   pickMidiFile: () => tauriOnly<string | null>("pick_midi_file"),
   saveRecordingWav: (bytes: number[]) => tauriOnly<string>("save_recording_wav", { bytes }),
+  exportAudioFile: (sourcePath: string) => tauriOnly<string | null>("export_audio_file", { sourcePath }),
   convertEmotion: (
     inputPath: string,
     emotion: string,

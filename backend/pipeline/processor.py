@@ -12,6 +12,7 @@ import numpy as np
 from backend.audio.filtering import post_filter_voice
 from backend.audio.dsp_metrics import measure_audio_health
 from backend.audio.dsp_profiles import get_dsp_profile_settings, update_dsp_profile
+from backend.audio.dsp_quality import optimize_post_filter_quality
 from backend.audio.features import extract_pitch_contour
 from backend.audio.io import default_output_path, load_audio_mono, save_audio
 from backend.audio.pure_dsp import merge_preserving_noise_regions, prepare_clean_speech
@@ -439,20 +440,18 @@ class VoiceConversionPipeline:
     ) -> tuple[np.ndarray, dict[str, float]]:
         settings = get_dsp_profile_settings(profile_name, profiles_dir=self.dsp_profiles_dir)
         pre_metrics = measure_audio_health(audio, self.sample_rate, prefix="pre_post_")
-        filter_settings = settings.as_filter_settings()
         neural_safe_filter = engine in {"freevc", "rvc"}
-        if neural_safe_filter:
-            filter_settings.update(
-                {
-                    "use_noisereduce": False,
-                    "use_pedalboard": False,
-                    "post_gain_db": min(float(settings.post_gain_db), 0.0),
-                    "deess_reduction_db": min(float(settings.deess_reduction_db), 2.0),
-                }
-            )
-
-        filtered = post_filter_voice(audio, self.sample_rate, settings=filter_settings)
-        post_metrics = measure_audio_health(filtered, self.sample_rate, prefix="post_")
+        quality_result = optimize_post_filter_quality(
+            audio,
+            self.sample_rate,
+            settings,
+            engine=engine,
+            pre_metrics=pre_metrics,
+            filter_func=post_filter_voice,
+        )
+        filtered = quality_result.audio
+        post_metrics = quality_result.metrics
+        profile_base_settings = settings if neural_safe_filter else quality_result.selected_settings
 
         try:
             updated = update_dsp_profile(
@@ -461,6 +460,7 @@ class VoiceConversionPipeline:
                 post_metrics=post_metrics,
                 engine=engine,
                 profiles_dir=self.dsp_profiles_dir,
+                base_settings=profile_base_settings,
             )
             profile_updated = 1.0
         except Exception as exc:  # pragma: no cover - defensive around local profile IO

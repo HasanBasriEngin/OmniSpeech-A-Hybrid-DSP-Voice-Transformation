@@ -11,16 +11,21 @@ call :refresh_path
 if /i "!OMNISPEECH_LAUNCH_MODE!"=="desktop" (
   if /i not "!OMNISPEECH_FORCE_INSTALL:~0,1!"=="1" if /i not "!OMNISPEECH_FORCE_REBUILD:~0,1!"=="1" (
     if exist ".venv\Scripts\python.exe" if exist "dist\index.html" if exist "src-tauri\target\debug\omnispeech_desktop.exe" (
-      set "OMNISPEECH_PYTHON=%CD%\.venv\Scripts\python.exe"
-      call :free_port 8765
-      if errorlevel 1 (
-        pause
-        exit /b 1
+      call :needs_frontend_build
+      call :needs_desktop_build
+      if "!NEED_FRONTEND_BUILD!"=="0" if "!NEED_DESKTOP_BUILD!"=="0" (
+        set "OMNISPEECH_PYTHON=%CD%\.venv\Scripts\python.exe"
+        call :free_port 8765
+        if errorlevel 1 (
+          pause
+          exit /b 1
+        )
+        echo [INFO] Fast launching OmniSpeech desktop...
+        start "" /d "%CD%" "src-tauri\target\debug\omnispeech_desktop.exe"
+        endlocal
+        exit /b 0
       )
-      echo [INFO] Fast launching OmniSpeech desktop...
-      start "" /d "%CD%" "src-tauri\target\debug\omnispeech_desktop.exe"
-      endlocal
-      exit /b 0
+      echo [INFO] Existing desktop build is stale. Rebuilding before launch...
     )
   )
 )

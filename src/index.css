@@ -333,6 +333,12 @@ body {
   color: var(--accent2);
 }
 
+.btn-xs.export-active {
+  background: rgba(0, 212, 170, 0.13);
+  border-color: rgba(0, 212, 170, 0.58);
+  color: var(--teal);
+}
+
 .nav-button {
   width: 100%;
   background: transparent;
@@ -356,6 +362,46 @@ body {
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 5px;
   margin-top: 10px;
+}
+
+.output-export-bar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+  padding: 9px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(0, 212, 170, 0.32);
+  background: rgba(0, 212, 170, 0.07);
+}
+
+.output-export-copy {
+  min-width: 0;
+}
+
+.output-export-btn {
+  min-width: 142px;
+  height: 32px;
+  border-radius: 7px;
+  border: 1px solid rgba(0, 212, 170, 0.5);
+  background: rgba(0, 212, 170, 0.16);
+  color: var(--teal);
+  font-family: var(--font);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.16s;
+}
+
+.output-export-btn:hover {
+  background: rgba(0, 212, 170, 0.22);
+  border-color: var(--teal);
+}
+
+.output-export-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 /* Daha organik köşe yuvarlaklığı */
@@ -642,6 +688,30 @@ canvas.waveform {
   font-family: var(--mono);
   color: var(--text3);
   white-space: nowrap;
+}
+
+.export-btn {
+  min-width: 70px;
+  height: 30px;
+  border-radius: 6px;
+  border: 1px solid rgba(0, 212, 170, 0.34);
+  background: rgba(0, 212, 170, 0.08);
+  color: var(--teal);
+  font-family: var(--mono);
+  font-size: 10px;
+  cursor: pointer;
+  transition: all 0.15s;
+  flex-shrink: 0;
+}
+
+.export-btn:hover {
+  background: rgba(0, 212, 170, 0.14);
+  border-color: var(--teal);
+}
+
+.export-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
 }
 
 /* ——— Pitch alanı ——— */
@@ -1149,6 +1219,31 @@ input[type="range"].amber::-webkit-slider-thumb {
 .convert-btn:active {
   transform: scale(0.98);
   animation: none;
+}
+
+.export-action-btn {
+  width: 100%;
+  padding: 9px 10px;
+  margin-top: -4px;
+  border-radius: 8px;
+  border: 1px solid rgba(0, 212, 170, 0.38);
+  background: rgba(0, 212, 170, 0.1);
+  color: var(--teal);
+  font-size: 12px;
+  font-weight: 700;
+  font-family: var(--font);
+  cursor: pointer;
+  transition: all 0.18s;
+}
+
+.export-action-btn:hover {
+  background: rgba(0, 212, 170, 0.16);
+  border-color: var(--teal);
+}
+
+.export-action-btn:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
 }
 
 /* ——— Log paneli (daha kompakt) ——— */

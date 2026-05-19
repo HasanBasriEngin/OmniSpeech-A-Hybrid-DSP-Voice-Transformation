@@ -10,10 +10,12 @@ import pytest
 import soundfile as sf
 
 from backend.audio.filtering import LiveVoicePostFilter, post_filter_voice
-from backend.audio.dsp_profiles import apply_user_feedback, get_dsp_profile_settings
+from backend.audio.dsp_profiles import DSPProfileSettings, apply_user_feedback, get_dsp_profile_settings
 from backend.audio.dsp_metrics import measure_audio_health
+from backend.audio.dsp_quality import optimize_post_filter_quality
 from backend.audio.io import normalize_audio
 from backend.audio.pure_dsp import merge_preserving_noise_regions, prepare_clean_speech
+from backend.audio.spectrogram_quality import analyze_spectrogram_quality
 from backend.audio.spectrogram_image import SpectrogramImageResult, preprocess_spectrogram_for_model
 from backend.audio.voice_analysis import analyze_pitch_confidence
 from backend.modules import emotion as emotion_module
@@ -29,7 +31,7 @@ from backend.modules.freevc_adapter import (
 from backend.modules.hf_voice_assets import import_hf_voice_assets, plan_hf_voice_asset_imports
 from backend.pipeline import processor as processor_module
 from backend.pipeline.processor import VoiceConversionPipeline
-from backend.services.live_session import LiveSessionManager
+from backend.services.live_session import LiveOverlapCrossfader, LiveSessionManager
 from backend.tools.import_freevc_assets import import_freevc_assets
 
 
@@ -1034,6 +1036,23 @@ def test_post_filter_limits_spikes_and_keeps_finite_output():
     assert float(np.max(np.abs(filtered))) <= 0.96
 
 
+def test_post_filter_softens_clustered_crackle():
+    sr = 22050
+    t = np.linspace(0, 0.35, int(sr * 0.35), endpoint=False, dtype=np.float32)
+    source = (0.16 * np.sin(2 * np.pi * 220 * t)).astype(np.float32)
+    start = int(sr * 0.16)
+    cluster = (0.22 * np.sign(np.sin(2 * np.pi * 4_800 * t[: int(sr * 0.035)]))).astype(np.float32)
+    source[start : start + cluster.size] += cluster
+
+    filtered = post_filter_voice(source, sr, settings={"use_noisereduce": False, "use_pedalboard": False})
+
+    before_jump = float(np.percentile(np.abs(np.diff(source)), 99.7))
+    after_jump = float(np.percentile(np.abs(np.diff(filtered)), 99.7))
+    assert filtered.dtype == np.float32
+    assert np.all(np.isfinite(filtered))
+    assert after_jump < before_jump * 0.82
+
+
 def test_live_post_filter_limits_chunk_energy():
     sr = 22050
     t = np.linspace(0, 0.1, int(sr * 0.1), endpoint=False, dtype=np.float32)
@@ -1045,6 +1064,60 @@ def test_live_post_filter_limits_chunk_energy():
     assert filtered.dtype == np.float32
     assert np.all(np.isfinite(filtered))
     assert float(np.max(np.abs(filtered))) <= 0.96
+
+
+def test_live_overlap_crossfader_softens_chunk_boundary():
+    smoother = LiveOverlapCrossfader(22050)
+    first = np.full(2048, 0.4, dtype=np.float32)
+    second = np.full(2048, -0.4, dtype=np.float32)
+
+    out_first = smoother.process(first)
+    out_second = smoother.process(second)
+
+    raw_jump = abs(float(first[-1]) - float(second[0]))
+    smoothed_jump = abs(float(out_first[-1]) - float(out_second[0]))
+    assert out_first.size == first.size
+    assert out_second.size == second.size
+    assert smoothed_jump < raw_jump * 0.2
+    assert float(out_second[700]) < -0.35
+
+
+def test_excited_profile_prioritizes_smooth_dsp():
+    profile = emotion_module.EMOTION_PROFILES["excited"]
+
+    assert profile["pitch_shift"] <= 1.25
+    assert profile["rate"] <= 1.04
+    assert profile["jitter"] == 0.0
+    assert profile["vibrato_rate"] == 0.0
+    assert profile["drive"] <= 1.04
+
+
+def test_excited_conversion_protects_unvoiced_and_silence(monkeypatch: pytest.MonkeyPatch):
+    sr = 22050
+    t = np.linspace(0, 0.25, int(sr * 0.25), endpoint=False, dtype=np.float32)
+    voiced = (0.18 * np.sin(2 * np.pi * 180 * t)).astype(np.float32)
+    rng = np.random.default_rng(123)
+    noise = rng.normal(0.0, 0.08, int(sr * 0.14)).astype(np.float32)
+    fricative = (noise - np.convolve(noise, np.ones(19, dtype=np.float32) / 19.0, mode="same")).astype(np.float32)
+    silence = np.zeros(int(sr * 0.12), dtype=np.float32)
+    source = np.concatenate([voiced, fricative, silence])
+
+    monkeypatch.setattr(emotion_module, "_pitch_shift_with_parselmouth", lambda audio, sample_rate, n_steps: None)
+    converted = emotion_module.convert_emotion(source, sr, "excited")
+
+    def rms(values: np.ndarray) -> float:
+        return float(np.sqrt(np.mean(np.asarray(values, dtype=np.float32) ** 2)))
+
+    voiced_slice = slice(0, voiced.size)
+    fricative_slice = slice(voiced.size, voiced.size + fricative.size)
+    silence_slice = slice(voiced.size + fricative.size, None)
+    voiced_delta = rms(converted[voiced_slice] - source[voiced_slice])
+    fricative_delta = rms(converted[fricative_slice] - source[fricative_slice])
+
+    assert converted.dtype == np.float32
+    assert np.all(np.isfinite(converted))
+    assert fricative_delta < voiced_delta * 0.35
+    assert float(np.max(np.abs(converted[silence_slice]))) < 0.025
 
 
 def test_normalize_audio_rms_mode_hits_target_level():
@@ -1129,6 +1202,8 @@ def test_pipeline_updates_submodule_dsp_profile():
     assert "gender_age.male_to_female" in registry["profiles"]
     assert registry["profiles"]["gender_age.male_to_female"]["parent_profile"] == "gender_age"
     assert result.metrics["dsp_profile_updated"] == 1.0
+    assert result.metrics["dsp_quality_optimizer_applied"] == 1.0
+    assert result.metrics["dsp_quality_candidates"] == 3.0
 
 
 def test_pitch_confidence_tracks_voiced_sine():
@@ -1149,6 +1224,42 @@ def test_artifact_metrics_expose_scores():
     assert "post_artifact_score" in metrics
     assert 0.0 <= metrics["post_artifact_score"] <= 1.0
     assert "post_artifact_pitch_score" in metrics
+    assert "post_spectrogram_artifact_score" in metrics
+    assert "post_artifact_spectrogram_score" in metrics
+
+
+def test_spectrogram_quality_exposes_band_and_artifact_scores():
+    sr = 22050
+    t = np.linspace(0, 0.45, int(sr * 0.45), endpoint=False, dtype=np.float32)
+    source = (0.18 * np.sin(2 * np.pi * 220 * t) + 0.05 * np.sin(2 * np.pi * 6_200 * t)).astype(np.float32)
+
+    metrics = analyze_spectrogram_quality(source, sr, prefix="post_")
+
+    assert 0.0 <= metrics["post_spectrogram_sibilance_ratio"] <= 1.0
+    assert metrics["post_spectrogram_sibilance_ratio"] > 0.0
+    assert 0.0 <= metrics["post_spectrogram_artifact_score"] <= 1.0
+    assert 0.0 <= metrics["post_spectrogram_balance_score"] <= 1.0
+
+
+def test_quality_optimizer_selects_best_scored_variant():
+    sr = 22050
+    source = _sine(sr=sr, duration=0.45)
+    source = (source + 0.025 * np.sin(2 * np.pi * 6_000 * np.linspace(0, 0.45, source.size, endpoint=False))).astype(np.float32)
+
+    result = optimize_post_filter_quality(
+        source,
+        sr,
+        DSPProfileSettings(post_gain_db=1.5, presence_db=2.0, spectral_tilt_db=1.5),
+        engine="dsp",
+    )
+
+    assert result.candidate_count == 3
+    assert result.selected_score <= result.baseline_score + 1e-8
+    assert result.metrics["dsp_quality_optimizer_applied"] == 1.0
+    assert result.metrics["dsp_quality_candidates"] == 3.0
+    assert 0.0 <= result.metrics["post_artifact_score"] <= 1.0
+    assert "post_spectrogram_artifact_score" in result.metrics
+    assert "dsp_quality_candidate_0_spectrogram" in result.metrics
 
 
 def test_gender_age_cepstral_formant_warp_keeps_finite_output():

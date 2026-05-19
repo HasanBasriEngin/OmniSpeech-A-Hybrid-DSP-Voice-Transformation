@@ -1,5 +1,6 @@
 use serde_json::{json, Value};
 use std::fs;
+use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::AppHandle;
 use tauri_plugin_dialog::{DialogExt, FilePath};
@@ -98,6 +99,52 @@ pub fn save_recording_wav(bytes: Vec<u8>) -> Result<String, String> {
     let path = dir.join(format!("mic_recording_{timestamp}.wav"));
     fs::write(&path, bytes).map_err(|err| format!("Failed to save recording: {err}"))?;
     Ok(path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+pub async fn export_audio_file(app: AppHandle, source_path: String) -> Result<Option<String>, String> {
+    let source = PathBuf::from(&source_path);
+    if !source.exists() {
+        return Err(format!("Output file does not exist: {source_path}"));
+    }
+    if !source.is_file() {
+        return Err(format!("Output path is not a file: {source_path}"));
+    }
+
+    let suggested_name = source
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.trim().is_empty())
+        .unwrap_or("omnispeech_output.wav")
+        .to_string();
+
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    app.dialog()
+        .file()
+        .add_filter("Audio", &["wav", "flac", "mp3", "ogg", "m4a"])
+        .set_file_name(&suggested_name)
+        .save_file(move |path| {
+            let mapped = path.map(map_file_path);
+            let _ = tx.send(mapped);
+        });
+
+    let Some(destination) = rx
+        .await
+        .map_err(|err| format!("Failed to receive save dialog response: {err}"))?
+    else {
+        return Ok(None);
+    };
+
+    let destination_path = Path::new(&destination);
+    if let Some(parent) = destination_path.parent() {
+        fs::create_dir_all(parent).map_err(|err| format!("Failed to create export directory: {err}"))?;
+    }
+    if source == destination_path {
+        return Ok(Some(destination));
+    }
+
+    fs::copy(&source, destination_path).map_err(|err| format!("Failed to export audio: {err}"))?;
+    Ok(Some(destination))
 }
 
 #[tauri::command]
