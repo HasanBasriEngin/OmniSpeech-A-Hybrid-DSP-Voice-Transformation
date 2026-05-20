@@ -1110,7 +1110,7 @@ export default function App() {
         <div className="logo">
           <div className="logo-icon">S</div>
           <div>
-            <div className="logo-text">SpeechWarp</div>
+            <div className="logo-text">OmniSpeech</div>
             <div className="logo-sub">v0.9 · CENG 384</div>
           </div>
         </div>
