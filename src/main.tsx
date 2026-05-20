@@ -16,10 +16,10 @@ const hideBootSplash = () => {
     return;
   }
 
-  window.setTimeout(() => {
+  window.requestAnimationFrame(() => {
     splash.classList.add("hidden");
-    window.setTimeout(() => splash.remove(), 500);
-  }, 380);
+    window.setTimeout(() => splash.remove(), 180);
+  });
 };
 
 hideBootSplash();

@@ -14,6 +14,7 @@ export const api = {
   pickReferenceFiles: () => tauriOnly<string[]>("pick_reference_files"),
   pickMidiFile: () => tauriOnly<string | null>("pick_midi_file"),
   saveRecordingWav: (bytes: number[]) => tauriOnly<string>("save_recording_wav", { bytes }),
+  exportAudioFile: (sourcePath: string) => tauriOnly<string | null>("export_audio_file", { sourcePath }),
   convertEmotion: (
     inputPath: string,
     emotion: string,
@@ -21,19 +22,23 @@ export const api = {
     rateOverride: number | null = null,
     energyOverride: number | null = null,
     outputPath: string | null = null,
-  ) => tauriOnly<ConversionResult>("convert_emotion", { inputPath, emotion, pitchOverride, rateOverride, energyOverride, outputPath }),
-  convertGenderAge: (inputPath: string, mode: string, outputPath: string | null = null) =>
-    tauriOnly<ConversionResult>("convert_gender_age", { inputPath, mode, outputPath }),
-  convertSpeakerClone: (inputPath: string, referencePaths: string[], outputPath: string | null = null) =>
-    tauriOnly<ConversionResult>("convert_speaker_clone", { inputPath, referencePaths, outputPath }),
+    useAiEngines = true,
+  ) => tauriOnly<ConversionResult>("convert_emotion", { inputPath, emotion, pitchOverride, rateOverride, energyOverride, outputPath, useAiEngines }),
+  convertGenderAge: (inputPath: string, mode: string, outputPath: string | null = null, useAiEngines = true) =>
+    tauriOnly<ConversionResult>("convert_gender_age", { inputPath, mode, outputPath, useAiEngines }),
+  convertSpeakerClone: (inputPath: string, referencePaths: string[], outputPath: string | null = null, useAiEngines = true) =>
+    tauriOnly<ConversionResult>("convert_speaker_clone", { inputPath, referencePaths, outputPath, useAiEngines }),
   convertSinging: (
     inputPath: string,
     midiPath: string | null,
     pitchContour: number[] | null = null,
     outputPath: string | null = null,
-  ) => tauriOnly<ConversionResult>("convert_singing", { inputPath, midiPath, pitchContour, outputPath }),
-  convertCelebrity: (inputPath: string, celebrity: string, outputPath: string | null = null) =>
-    tauriOnly<ConversionResult>("convert_celebrity", { inputPath, celebrity, outputPath }),
+    useAiEngines = true,
+  ) => tauriOnly<ConversionResult>("convert_singing", { inputPath, midiPath, pitchContour, outputPath, useAiEngines }),
+  convertCelebrity: (inputPath: string, celebrity: string, outputPath: string | null = null, useAiEngines = true) =>
+    tauriOnly<ConversionResult>("convert_celebrity", { inputPath, celebrity, outputPath, useAiEngines }),
+  sendDspFeedback: (profileName: string, feedback: string) =>
+    tauriOnly<{ profile_name: string; feedback: string; settings: Record<string, unknown> }>("send_dsp_feedback", { profileName, feedback }),
   listVirtualMics: () => tauriOnly<string[]>("list_virtual_mic_devices"),
   startLiveSession: (
     task: ConversionTask,

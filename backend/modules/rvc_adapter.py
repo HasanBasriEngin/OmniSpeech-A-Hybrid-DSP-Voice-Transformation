@@ -13,10 +13,19 @@ import numpy as np
 from scipy import signal
 import soundfile as sf
 
+from backend.modules.applio_rvc_adapter import (
+    ApplioRVCSettings,
+    clear_applio_engine_cache,
+    convert_file_with_applio,
+    is_applio_available,
+    resolve_applio_root,
+)
+
 logger = logging.getLogger(__name__)
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _REGISTRY_FILENAME = "registry.json"
+_RVC_ENGINES = {"auto", "rvc-python", "applio"}
 _RVC_INFERENCE_CLASS: Any | None = None
 _RVC_INSTANCE_CACHE: dict[tuple[str, str], Any] = {}
 
@@ -29,12 +38,27 @@ class RVCModelConfig:
     index_path: Path | None
     pitch: int
     index_rate: float
+    engine: str
+    f0_method: str
+    volume_envelope: float
+    protect: float
+    split_audio: bool
+    f0_autotune: bool
+    f0_autotune_strength: float
+    proposed_pitch: bool
+    proposed_pitch_threshold: float
+    embedder_model: str
+    embedder_model_custom: str | None
+    clean_audio: bool
+    clean_strength: float
+    applio_root: Path
 
 
 @dataclass(frozen=True)
 class RVCConversionResult:
     audio: np.ndarray
     config: RVCModelConfig
+    engine: str
 
 
 def resolve_models_dir(models_dir: str | os.PathLike[str] | None = None) -> Path:
@@ -92,6 +116,46 @@ def load_rvc_registry(models_dir: str | os.PathLike[str] | None = None) -> dict[
     return registry
 
 
+def _coerce_string(value: Any, default: str) -> str:
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return default
+
+
+def _coerce_optional_string(value: Any) -> str | None:
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
+
+
+def _coerce_float(value: Any, default: float) -> float:
+    if isinstance(value, (int, float)):
+        return float(value)
+    return default
+
+
+def _coerce_bool(value: Any, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off"}:
+            return False
+    return default
+
+
+def _normalize_engine(value: Any) -> str:
+    requested = _coerce_string(value, os.getenv("OMNISPEECH_RVC_ENGINE", "auto")).lower()
+    if requested in {"rvc_python", "rvcpython"}:
+        requested = "rvc-python"
+    if requested not in _RVC_ENGINES:
+        allowed = ", ".join(sorted(_RVC_ENGINES))
+        raise ValueError(f"Unsupported RVC engine '{requested}'. Allowed: {allowed}")
+    return requested
+
+
 def get_rvc_config(
     category: str,
     key: str,
@@ -134,6 +198,20 @@ def get_rvc_config(
         index_path=index_path,
         pitch=int(raw_entry.get("pitch", 0)),
         index_rate=float(raw_entry.get("index_rate", 0.5)),
+        engine=_normalize_engine(raw_entry.get("engine")),
+        f0_method=_coerce_string(raw_entry.get("f0_method"), "rmvpe"),
+        volume_envelope=_coerce_float(raw_entry.get("volume_envelope"), 1.0),
+        protect=_coerce_float(raw_entry.get("protect"), 0.5),
+        split_audio=_coerce_bool(raw_entry.get("split_audio"), False),
+        f0_autotune=_coerce_bool(raw_entry.get("f0_autotune"), False),
+        f0_autotune_strength=_coerce_float(raw_entry.get("f0_autotune_strength"), 1.0),
+        proposed_pitch=_coerce_bool(raw_entry.get("proposed_pitch"), False),
+        proposed_pitch_threshold=_coerce_float(raw_entry.get("proposed_pitch_threshold"), 155.0),
+        embedder_model=_coerce_string(raw_entry.get("embedder_model"), "contentvec"),
+        embedder_model_custom=_coerce_optional_string(raw_entry.get("embedder_model_custom")),
+        clean_audio=_coerce_bool(raw_entry.get("clean_audio"), False),
+        clean_strength=_coerce_float(raw_entry.get("clean_strength"), 0.5),
+        applio_root=resolve_applio_root(_coerce_optional_string(raw_entry.get("applio_root"))),
     )
 
 
@@ -211,6 +289,73 @@ def _infer_file(engine: Any, input_path: Path, output_path: Path, config: RVCMod
         engine.infer_file(str(input_path), str(output_path))
 
 
+def _infer_file_with_rvc_python(input_path: Path, output_path: Path, config: RVCModelConfig, device: str) -> None:
+    engine = _load_rvc_engine(config, device)
+    _infer_file(engine, input_path, output_path, config)
+
+
+def _applio_settings_from_config(config: RVCModelConfig) -> ApplioRVCSettings:
+    return ApplioRVCSettings(
+        f0_method=config.f0_method,
+        volume_envelope=config.volume_envelope,
+        protect=config.protect,
+        split_audio=config.split_audio,
+        f0_autotune=config.f0_autotune,
+        f0_autotune_strength=config.f0_autotune_strength,
+        proposed_pitch=config.proposed_pitch,
+        proposed_pitch_threshold=config.proposed_pitch_threshold,
+        embedder_model=config.embedder_model,
+        embedder_model_custom=config.embedder_model_custom,
+        clean_audio=config.clean_audio,
+        clean_strength=config.clean_strength,
+    )
+
+
+def _infer_file_with_applio(input_path: Path, output_path: Path, config: RVCModelConfig, device: str) -> None:
+    convert_file_with_applio(
+        input_path,
+        output_path,
+        config.model_path,
+        config.index_path,
+        pitch=config.pitch,
+        index_rate=config.index_rate,
+        applio_root=config.applio_root,
+        settings=_applio_settings_from_config(config),
+        device=device,
+    )
+
+
+def _is_missing_rvc_python_error(exc: RuntimeError) -> bool:
+    return "rvc-python is not installed" in str(exc)
+
+
+def _infer_file_with_selected_engine(
+    input_path: Path,
+    output_path: Path,
+    config: RVCModelConfig,
+    device: str,
+) -> str:
+    if config.engine == "rvc-python":
+        _infer_file_with_rvc_python(input_path, output_path, config, device)
+        return "rvc-python"
+
+    if config.engine == "applio":
+        _infer_file_with_applio(input_path, output_path, config, device)
+        return "applio"
+
+    try:
+        _infer_file_with_rvc_python(input_path, output_path, config, device)
+        return "rvc-python"
+    except RuntimeError as exc:
+        if not _is_missing_rvc_python_error(exc):
+            raise
+        if not is_applio_available(config.applio_root):
+            raise
+        logger.info("rvc-python is unavailable; falling back to Applio RVC engine.")
+        _infer_file_with_applio(input_path, output_path, config, device)
+        return "applio"
+
+
 def _load_output_audio(path: Path, sample_rate: int) -> np.ndarray:
     audio, source_rate = sf.read(str(path), dtype="float32", always_2d=False)
     x = np.asarray(audio, dtype=np.float32)
@@ -245,8 +390,7 @@ def convert_file_with_rvc(
     temp_dir = _create_temp_run_dir()
     try:
         output_path = temp_dir / "rvc_output.wav"
-        engine = _load_rvc_engine(config, rvc_device)
-        _infer_file(engine, source_path, output_path, config)
+        selected_engine = _infer_file_with_selected_engine(source_path, output_path, config, rvc_device)
 
         if not output_path.exists():
             raise RuntimeError(f"RVC inference did not create an output file: {output_path}")
@@ -255,7 +399,7 @@ def convert_file_with_rvc(
     finally:
         _cleanup_temp_run_dir(temp_dir)
 
-    return RVCConversionResult(audio=np.asarray(audio, dtype=np.float32), config=config)
+    return RVCConversionResult(audio=np.asarray(audio, dtype=np.float32), config=config, engine=selected_engine)
 
 
 def convert_gender_age_with_rvc(
@@ -278,3 +422,4 @@ def convert_gender_age_with_rvc(
 
 def clear_rvc_engine_cache() -> None:
     _RVC_INSTANCE_CACHE.clear()
+    clear_applio_engine_cache()

@@ -1,5 +1,6 @@
 use serde_json::{json, Value};
 use std::fs;
+use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::AppHandle;
 use tauri_plugin_dialog::{DialogExt, FilePath};
@@ -101,12 +102,59 @@ pub fn save_recording_wav(bytes: Vec<u8>) -> Result<String, String> {
 }
 
 #[tauri::command]
+pub async fn export_audio_file(app: AppHandle, source_path: String) -> Result<Option<String>, String> {
+    let source = PathBuf::from(&source_path);
+    if !source.exists() {
+        return Err(format!("Output file does not exist: {source_path}"));
+    }
+    if !source.is_file() {
+        return Err(format!("Output path is not a file: {source_path}"));
+    }
+
+    let suggested_name = source
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.trim().is_empty())
+        .unwrap_or("omnispeech_output.wav")
+        .to_string();
+
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    app.dialog()
+        .file()
+        .add_filter("Audio", &["wav", "flac", "mp3", "ogg", "m4a"])
+        .set_file_name(&suggested_name)
+        .save_file(move |path| {
+            let mapped = path.map(map_file_path);
+            let _ = tx.send(mapped);
+        });
+
+    let Some(destination) = rx
+        .await
+        .map_err(|err| format!("Failed to receive save dialog response: {err}"))?
+    else {
+        return Ok(None);
+    };
+
+    let destination_path = Path::new(&destination);
+    if let Some(parent) = destination_path.parent() {
+        fs::create_dir_all(parent).map_err(|err| format!("Failed to create export directory: {err}"))?;
+    }
+    if source == destination_path {
+        return Ok(Some(destination));
+    }
+
+    fs::copy(&source, destination_path).map_err(|err| format!("Failed to export audio: {err}"))?;
+    Ok(Some(destination))
+}
+
+#[tauri::command]
 pub async fn convert_emotion(
     input_path: String,
     emotion: String,
     pitch_override: Option<f64>,
     rate_override: Option<f64>,
     energy_override: Option<f64>,
+    use_ai_engines: Option<bool>,
     output_path: Option<String>,
 ) -> Result<ConversionResponse, String> {
     let payload = json!({
@@ -115,6 +163,7 @@ pub async fn convert_emotion(
         "pitch_override": pitch_override,
         "rate_override": rate_override,
         "energy_override": energy_override,
+        "use_ai_engines": use_ai_engines.unwrap_or(true),
         "output_path": output_path,
     });
     let response = backend::post("/api/convert/emotion", payload).await?;
@@ -125,11 +174,13 @@ pub async fn convert_emotion(
 pub async fn convert_gender_age(
     input_path: String,
     mode: String,
+    use_ai_engines: Option<bool>,
     output_path: Option<String>,
 ) -> Result<ConversionResponse, String> {
     let payload = json!({
         "input_path": input_path,
         "mode": mode,
+        "use_ai_engines": use_ai_engines.unwrap_or(true),
         "output_path": output_path,
     });
     let response = backend::post("/api/convert/gender-age", payload).await?;
@@ -140,11 +191,13 @@ pub async fn convert_gender_age(
 pub async fn convert_speaker_clone(
     input_path: String,
     reference_paths: Vec<String>,
+    use_ai_engines: Option<bool>,
     output_path: Option<String>,
 ) -> Result<ConversionResponse, String> {
     let payload = json!({
         "input_path": input_path,
         "reference_paths": reference_paths,
+        "use_ai_engines": use_ai_engines.unwrap_or(true),
         "output_path": output_path,
     });
     let response = backend::post("/api/convert/speaker-clone", payload).await?;
@@ -156,12 +209,14 @@ pub async fn convert_singing(
     input_path: String,
     midi_path: Option<String>,
     pitch_contour: Option<Vec<f32>>,
+    use_ai_engines: Option<bool>,
     output_path: Option<String>,
 ) -> Result<ConversionResponse, String> {
     let payload = json!({
         "input_path": input_path,
         "midi_path": midi_path,
         "pitch_contour": pitch_contour,
+        "use_ai_engines": use_ai_engines.unwrap_or(true),
         "output_path": output_path,
     });
     let response = backend::post("/api/convert/singing", payload).await?;
@@ -172,15 +227,26 @@ pub async fn convert_singing(
 pub async fn convert_celebrity(
     input_path: String,
     celebrity: String,
+    use_ai_engines: Option<bool>,
     output_path: Option<String>,
 ) -> Result<ConversionResponse, String> {
     let payload = json!({
         "input_path": input_path,
         "celebrity": celebrity,
+        "use_ai_engines": use_ai_engines.unwrap_or(true),
         "output_path": output_path,
     });
     let response = backend::post("/api/convert/celebrity", payload).await?;
     serde_json::from_value(response).map_err(|err| format!("Invalid conversion response: {err}"))
+}
+
+#[tauri::command]
+pub async fn send_dsp_feedback(profile_name: String, feedback: String) -> Result<Value, String> {
+    let payload = json!({
+        "profile_name": profile_name,
+        "feedback": feedback,
+    });
+    backend::post("/api/dsp/feedback", payload).await
 }
 
 #[tauri::command]

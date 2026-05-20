@@ -5,6 +5,7 @@ import logging
 import numpy as np
 
 from backend.audio.features import pitch_shift_audio, stretch_to_length, time_stretch_audio
+from backend.audio.pure_dsp import analyze_speech_regions
 
 logger = logging.getLogger(__name__)
 
@@ -37,17 +38,17 @@ EMOTION_PROFILES: dict[str, dict[str, float]] = {
         "vibrato_depth": 0.0,
     },
     "excited": {
-        "pitch_shift": 5.8,
-        "rate": 1.18,
-        "spectral_tilt": 2.4,
-        "prosody_depth": 0.26,
-        "drive": 1.25,
-        "target_rms": 0.13,
-        "attack": 0.65,
-        "breath": 0.006,
-        "jitter": 0.018,
-        "vibrato_rate": 5.0,
-        "vibrato_depth": 0.08,
+        "pitch_shift": 1.2,
+        "rate": 1.03,
+        "spectral_tilt": 0.9,
+        "prosody_depth": 0.10,
+        "drive": 1.03,
+        "target_rms": 0.105,
+        "attack": 0.22,
+        "breath": 0.003,
+        "jitter": 0.0,
+        "vibrato_rate": 0.0,
+        "vibrato_depth": 0.0,
     },
     "whisper": {
         "pitch_shift": -1.0,
@@ -80,7 +81,7 @@ EMOTION_PROFILES: dict[str, dict[str, float]] = {
 FORMANT_FACTORS: dict[str, tuple[float, float, float]] = {
     "sad": (0.92, 0.96, 0.98),
     "angry": (1.08, 1.07, 1.04),
-    "excited": (1.06, 1.05, 1.03),
+    "excited": (1.014, 1.01, 1.006),
     "whisper": (1.02, 1.10, 1.16),
     "calm": (0.98, 0.99, 1.00),
 }
@@ -206,6 +207,73 @@ def _apply_spectral_tilt(audio: np.ndarray, tilt_strength: float, presence_boost
     return np.fft.irfft(spec * curve, n=audio.size).astype(np.float32)
 
 
+def _smooth_mask(mask: np.ndarray, sample_rate: int, milliseconds: float) -> np.ndarray:
+    values = np.asarray(mask, dtype=np.float32)
+    if values.size == 0:
+        return values
+
+    window = max(3, int(round(sample_rate * milliseconds / 1000.0)))
+    if window % 2 == 0:
+        window += 1
+    kernel = np.hanning(window).astype(np.float32)
+    kernel_sum = float(np.sum(kernel))
+    if kernel_sum <= 1e-8:
+        return values
+    kernel /= kernel_sum
+    return np.convolve(values, kernel, mode="same").astype(np.float32)
+
+
+def _region_mix_mask(source: np.ndarray, sample_rate: int, emotion: str, *, stage: str) -> np.ndarray:
+    x = np.asarray(source, dtype=np.float32)
+    if x.size == 0:
+        return np.zeros(0, dtype=np.float32)
+
+    try:
+        masks = analyze_speech_regions(x, sample_rate)
+    except Exception as exc:  # pragma: no cover - defensive fallback for unusual inputs
+        logger.debug("Speech region analysis failed for emotion blend: %s", exc)
+        return np.ones(x.size, dtype=np.float32)
+
+    if emotion == "excited":
+        if stage == "pitch":
+            voiced_mix, unvoiced_mix, silence_mix, transient_mix = 0.82, 0.12, 0.0, 0.20
+        else:
+            voiced_mix, unvoiced_mix, silence_mix, transient_mix = 0.76, 0.22, 0.04, 0.28
+        smooth_ms = 32.0
+    else:
+        if stage == "pitch":
+            voiced_mix, unvoiced_mix, silence_mix, transient_mix = 0.92, 0.22, 0.02, 0.36
+        else:
+            voiced_mix, unvoiced_mix, silence_mix, transient_mix = 0.90, 0.34, 0.08, 0.44
+        smooth_ms = 24.0
+
+    blend = np.zeros(x.size, dtype=np.float32)
+    blend[masks.voiced > 0.5] = voiced_mix
+    blend[masks.unvoiced > 0.5] = unvoiced_mix
+    blend[masks.silence > 0.5] = silence_mix
+    if masks.transient.size:
+        blend[masks.transient > 0.5] = np.minimum(blend[masks.transient > 0.5], transient_mix)
+
+    return np.clip(_smooth_mask(blend, sample_rate, smooth_ms), 0.0, 1.0).astype(np.float32)
+
+
+def _blend_with_source_regions(
+    source: np.ndarray,
+    transformed: np.ndarray,
+    sample_rate: int,
+    emotion: str,
+    *,
+    stage: str,
+) -> np.ndarray:
+    x = np.asarray(source, dtype=np.float32)
+    y = stretch_to_length(np.asarray(transformed, dtype=np.float32), x.size)
+    if x.size == 0:
+        return y
+
+    blend = _region_mix_mask(x, sample_rate, emotion, stage=stage)
+    return ((1.0 - blend) * x + blend * y).astype(np.float32)
+
+
 def _apply_formant_shift(audio: np.ndarray, sample_rate: int, factors: tuple[float, float, float]) -> np.ndarray:
     x = np.asarray(audio, dtype=np.float32)
     if x.size < 32:
@@ -256,7 +324,7 @@ def _apply_prosody(audio: np.ndarray, sample_rate: int, depth: float, emotion: s
     elif emotion == "angry":
         control = np.maximum(control, 0.0) * 1.15
     elif emotion == "excited":
-        control = control * 0.9 + np.abs(np.roll(control, 1)) * 0.35
+        control = control * 0.35 + np.abs(np.roll(control, 1)) * 0.15
     elif emotion == "calm":
         control = control * 0.18
     else:
@@ -360,6 +428,7 @@ def convert_emotion(
     pitched = _pitch_shift_with_parselmouth(source, sample_rate, pitch_shift)
     if pitched is None:
         pitched = _psola_pitch_shift(source, sample_rate, pitch_shift)
+    pitched = _blend_with_source_regions(source, pitched, sample_rate, emotion, stage="pitch")
     pitched = _apply_pitch_jitter(pitched, sample_rate, profile["jitter"], emotion)
     pitched = _apply_vibrato(pitched, sample_rate, profile["vibrato_rate"], profile["vibrato_depth"])
 
@@ -373,11 +442,12 @@ def convert_emotion(
     formed = _apply_formant_shift(expressive, sample_rate, FORMANT_FACTORS[emotion])
     attacked = _apply_attack_emphasis(formed, profile["attack"])
     driven = np.tanh(np.asarray(attacked * profile["drive"], dtype=np.float32))
-    presence_boost = 0.18 if emotion == "sad" else 0.52 if emotion == "angry" else 0.4 if emotion == "excited" else 0.12
+    presence_boost = 0.18 if emotion == "sad" else 0.52 if emotion == "angry" else 0.16 if emotion == "excited" else 0.12
     tilted = _apply_spectral_tilt(driven, profile["spectral_tilt"], presence_boost)
     scaled = _match_target_rms(tilted, profile["target_rms"] * energy)
 
     if profile["breath"] > 0:
         scaled = _apply_breathiness(scaled, profile["breath"], emotion)
 
-    return np.clip(scaled, -1.0, 1.0).astype(np.float32)
+    blended = _blend_with_source_regions(source, scaled, sample_rate, emotion, stage="final")
+    return np.clip(blended, -1.0, 1.0).astype(np.float32)

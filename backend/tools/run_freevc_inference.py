@@ -11,6 +11,9 @@ import sys
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run FreeVC 24 kHz inference from imported HF Space assets.")
     parser.add_argument("--assets-dir", required=True)
+    parser.add_argument("--config", default="configs/freevc-24.json")
+    parser.add_argument("--checkpoint", default="checkpoints/freevc-24.pth")
+    parser.add_argument("--speaker-encoder", default="speaker_encoder/ckpt/pretrained_bak_5805000.pt")
     parser.add_argument("--wavlm-model", required=True)
     parser.add_argument("--input", required=True)
     parser.add_argument("--reference", required=True)
@@ -55,6 +58,9 @@ def main() -> int:
     input_path = _resolve_path_arg(args.input, base_dir)
     reference_path = _resolve_path_arg(args.reference, base_dir)
     output_path = _resolve_path_arg(args.output, base_dir)
+    config_path = _resolve_path_arg(args.config, assets_dir)
+    checkpoint_path = _resolve_path_arg(args.checkpoint, assets_dir)
+    speaker_encoder_path = _resolve_path_arg(args.speaker_encoder, assets_dir)
     wavlm_model = _resolve_model_arg(args.wavlm_model, base_dir)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -76,16 +82,16 @@ def main() -> int:
             requested_device = "cpu"
         device = torch.device(requested_device)
 
-        hps = utils.get_hparams_from_file("configs/freevc-24.json")
+        hps = utils.get_hparams_from_file(str(config_path))
         net_g = models.SynthesizerTrn(
             hps.data.filter_length // 2 + 1,
             hps.train.segment_size // hps.data.hop_length,
             **hps.model,
         ).to(device)
         net_g.eval()
-        utils.load_checkpoint("checkpoints/freevc-24.pth", net_g, None)
+        utils.load_checkpoint(str(checkpoint_path), net_g, None)
 
-        speaker_model = speaker_encoder.SpeakerEncoder("speaker_encoder/ckpt/pretrained_bak_5805000.pt")
+        speaker_model = speaker_encoder.SpeakerEncoder(str(speaker_encoder_path))
         wavlm = WavLMModel.from_pretrained(wavlm_model).to(device)
         wavlm.eval()
 
@@ -101,7 +107,7 @@ def main() -> int:
             audio = net_g.infer(content, g=g_ref)
             audio_np = audio[0][0].data.cpu().float().numpy()
 
-        write(str(output_path), 24000, audio_np)
+        write(str(output_path), int(hps.data.sampling_rate), audio_np)
     finally:
         os.chdir(previous_cwd)
     return 0

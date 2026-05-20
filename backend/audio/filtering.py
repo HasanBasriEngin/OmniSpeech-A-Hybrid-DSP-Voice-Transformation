@@ -9,6 +9,7 @@ This module now covers two cases:
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 import warnings
 
 import numpy as np
@@ -181,6 +182,47 @@ def _declick(audio: np.ndarray, sample_rate: int) -> np.ndarray:
     return out.astype(np.float32)
 
 
+def _decrackle(audio: np.ndarray, sample_rate: int) -> np.ndarray:
+    """Soften dense, short impulse clusters that single-sample declick can miss."""
+    x = _as_mono_float(audio)
+    if x.size < 64 or sample_rate <= 0:
+        return x
+
+    diff = np.concatenate([[0.0], np.abs(np.diff(x))]).astype(np.float32)
+    global_rms = float(np.sqrt(np.mean(x * x))) + 1e-8
+    robust_level = float(np.percentile(np.abs(x), 65)) + 1e-8
+    jump_threshold = max(0.16, min(global_rms * 3.4, robust_level * 2.4))
+    impulse = diff > jump_threshold
+    if not np.any(impulse):
+        return x
+
+    density_window = max(5, int(sample_rate * 0.006))
+    density = np.convolve(impulse.astype(np.float32), np.ones(density_window, dtype=np.float32), mode="same")
+    clustered = density >= 3.0
+    if not np.any(clustered):
+        return x
+
+    radius = max(2, int(sample_rate * 0.0025))
+    repair_mask = np.convolve(clustered.astype(np.float32), np.ones(radius * 2 + 1, dtype=np.float32), mode="same") > 0.0
+    if not np.any(repair_mask):
+        return x
+
+    kernel_size = max(5, int(sample_rate * 0.00055) | 1)
+    kernel_size = min(kernel_size, 17)
+    repaired = signal.medfilt(x, kernel_size=kernel_size).astype(np.float32)
+
+    fade = max(3, int(sample_rate * 0.002))
+    fade_kernel = np.hanning(fade * 2 + 1).astype(np.float32)
+    fade_sum = float(np.sum(fade_kernel))
+    if fade_sum > 1e-8:
+        fade_kernel /= fade_sum
+        alpha = np.clip(np.convolve(repair_mask.astype(np.float32), fade_kernel, mode="same"), 0.0, 1.0)
+    else:
+        alpha = repair_mask.astype(np.float32)
+
+    return ((1.0 - alpha) * x + alpha * repaired).astype(np.float32)
+
+
 def _soft_limit(
     audio: np.ndarray,
     ceiling: float = _SOFT_LIMIT_CEIL,
@@ -221,7 +263,7 @@ def _soft_limit(
     return out.astype(np.float32)
 
 
-def _deess(audio: np.ndarray, sample_rate: int) -> np.ndarray:
+def _deess(audio: np.ndarray, sample_rate: int, *, reduction_db: float = _DESS_REDUCTION_DB) -> np.ndarray:
     """Reduce excessive sibilance when the high-frequency band dominates."""
     x = _as_mono_float(audio)
     if x.size < 64:
@@ -248,9 +290,58 @@ def _deess(audio: np.ndarray, sample_rate: int) -> np.ndarray:
     if ratio < 0.25:
         return x
 
-    reduction_lin = 10.0 ** (-_DESS_REDUCTION_DB / 20.0)
+    reduction_lin = 10.0 ** (-max(0.0, float(reduction_db)) / 20.0)
     gain = 1.0 - (1.0 - reduction_lin) * np.clip((ratio - 0.25) / 0.75, 0.0, 1.0)
     return (x - sibilant + sibilant * float(gain)).astype(np.float32)
+
+
+def _noise_gate(audio: np.ndarray, sample_rate: int, *, floor: float) -> np.ndarray:
+    x = _as_mono_float(audio)
+    if x.size < 8 or floor <= 0.0:
+        return x
+    win_samples = max(8, int(sample_rate * 0.018))
+    kernel = np.ones(win_samples, dtype=np.float32) / float(win_samples)
+    envelope = np.sqrt(np.convolve(x * x, kernel, mode="same").clip(min=0.0)).astype(np.float32)
+    threshold = max(float(floor), 1e-5)
+    gate = np.clip((envelope - threshold * 0.5) / max(threshold * 1.5, 1e-6), 0.18, 1.0)
+    if gate.size > 8:
+        smooth = np.ones(9, dtype=np.float32) / 9.0
+        gate = np.convolve(gate, smooth, mode="same").astype(np.float32)
+    return (x * gate).astype(np.float32)
+
+
+def _tone_shape(audio: np.ndarray, sample_rate: int, *, presence_db: float, spectral_tilt_db: float) -> np.ndarray:
+    del sample_rate
+    x = _as_mono_float(audio)
+    if x.size < 16 or (abs(presence_db) < 1e-4 and abs(spectral_tilt_db) < 1e-4):
+        return x
+
+    spec = np.fft.rfft(x)
+    freqs = np.linspace(0.0, 1.0, spec.size, dtype=np.float32)
+    presence_gain = 10.0 ** (float(np.clip(presence_db, -6.0, 6.0)) / 20.0) - 1.0
+    tilt_gain = 10.0 ** (float(np.clip(spectral_tilt_db, -6.0, 6.0)) / 20.0) - 1.0
+    presence = 1.0 + presence_gain * np.exp(-((freqs - 0.34) ** 2) / (2 * 0.07**2))
+    tilt = 1.0 + tilt_gain * np.clip((freqs - 0.22) / 0.78, 0.0, 1.0)
+    curve = np.clip(presence * tilt, 0.25, 2.4)
+    return np.fft.irfft(spec * curve, n=x.size).astype(np.float32)
+
+
+def _settings_float(settings: Mapping[str, object] | None, key: str, default: float, lower: float, upper: float) -> float:
+    if settings is None:
+        return default
+    value = settings.get(key)
+    if isinstance(value, (int, float)):
+        return float(np.clip(float(value), lower, upper))
+    return default
+
+
+def _settings_bool(settings: Mapping[str, object] | None, key: str, default: bool) -> bool:
+    if settings is None:
+        return default
+    value = settings.get(key)
+    if isinstance(value, bool):
+        return value
+    return default
 
 
 def apply_post_filter(
@@ -265,6 +356,11 @@ def apply_post_filter(
     ceiling: float = _SOFT_LIMIT_CEIL,
     use_noisereduce: bool = True,
     use_pedalboard: bool = True,
+    deess_reduction_db: float = _DESS_REDUCTION_DB,
+    post_gain_db: float = 0.0,
+    noise_gate_floor: float = 0.0,
+    presence_db: float = 0.0,
+    spectral_tilt_db: float = 0.0,
 ) -> np.ndarray:
     """Apply the shared offline post-processing chain."""
     x = _as_mono_float(audio)
@@ -281,17 +377,30 @@ def apply_post_filter(
 
     if speech_band:
         x = _speech_band_filter(x, sample_rate)
+    if noise_gate_floor > 0.0:
+        x = _noise_gate(x, sample_rate, floor=noise_gate_floor)
     if declick:
         x = _declick(x, sample_rate)
+        x = _decrackle(x, sample_rate)
     if deess:
-        x = _deess(x, sample_rate)
+        x = _deess(x, sample_rate, reduction_db=deess_reduction_db)
+    if presence_db or spectral_tilt_db:
+        x = _tone_shape(x, sample_rate, presence_db=presence_db, spectral_tilt_db=spectral_tilt_db)
+    if post_gain_db:
+        x = (x * float(10.0 ** (post_gain_db / 20.0))).astype(np.float32)
     if soft_limit:
         x = _soft_limit(x, ceiling=ceiling, knee_db=knee_db)
 
     return np.asarray(x, dtype=np.float32)
 
 
-def post_filter_voice(audio: np.ndarray, sample_rate: int, *, realtime: bool = False) -> np.ndarray:
+def post_filter_voice(
+    audio: np.ndarray,
+    sample_rate: int,
+    *,
+    realtime: bool = False,
+    settings: Mapping[str, object] | None = None,
+) -> np.ndarray:
     """
     Public convenience wrapper used by conversion pipelines.
 
@@ -303,7 +412,19 @@ def post_filter_voice(audio: np.ndarray, sample_rate: int, *, realtime: bool = F
         return x
 
     x = x - float(np.mean(x))
-    x = apply_post_filter(x, sample_rate, use_noisereduce=not realtime, use_pedalboard=not realtime)
+    x = apply_post_filter(
+        x,
+        sample_rate,
+        use_noisereduce=(not realtime) and _settings_bool(settings, "use_noisereduce", True),
+        use_pedalboard=(not realtime) and _settings_bool(settings, "use_pedalboard", True),
+        ceiling=_settings_float(settings, "ceiling", _SOFT_LIMIT_CEIL, 0.82, 0.99),
+        knee_db=_settings_float(settings, "knee_db", _DEFAULT_KNEE_DB, 0.0, 12.0),
+        deess_reduction_db=_settings_float(settings, "deess_reduction_db", _DESS_REDUCTION_DB, 0.0, 12.0),
+        post_gain_db=_settings_float(settings, "post_gain_db", 0.0, -8.0, 6.0),
+        noise_gate_floor=_settings_float(settings, "noise_gate_floor", 0.0, 0.0, 0.08),
+        presence_db=_settings_float(settings, "presence_db", 0.0, -6.0, 6.0),
+        spectral_tilt_db=_settings_float(settings, "spectral_tilt_db", 0.0, -6.0, 6.0),
+    )
 
     if not realtime:
         x = _fade_edges(x, sample_rate)
@@ -330,9 +451,10 @@ class LiveVoicePostFilter:
             if self._speech_band_zi is None:
                 self._speech_band_zi = signal.sosfilt_zi(self._speech_band_sos) * x[0]
             x, self._speech_band_zi = signal.sosfilt(self._speech_band_sos, x, zi=self._speech_band_zi)
-            x = np.asarray(x, dtype=np.float32)
+        x = np.asarray(x, dtype=np.float32)
 
         x = _declick(x, self.sample_rate)
+        x = _decrackle(x, self.sample_rate)
         x = _deess(x, self.sample_rate)
         x = _soft_limit(x)
         return np.asarray(x, dtype=np.float32)

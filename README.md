@@ -79,6 +79,20 @@ py -3.10 -m venv .venv-rvc
 .venv-rvc\Scripts\python -m pip install -r requirements-rvc.txt
 ```
 
+Applio RVC motorunu denemek icin Applio reposunu yerel bir checkout olarak
+`vendor/applio` altina koyun veya `OMNISPEECH_APPLIO_ROOT` ile yolunu verin:
+
+```bash
+git clone https://github.com/IAHispano/Applio vendor/applio
+.venv-rvc\Scripts\python -m pip install -r requirements-applio.txt
+set OMNISPEECH_RVC_ENGINE=applio
+```
+
+`OMNISPEECH_RVC_ENGINE=auto` varsayilan moddur. Bu mod once mevcut
+`rvc-python` adaptoruyle dener; `rvc-python` kurulu degilse ve Applio checkout'u
+bulunursa Applio motoruna duser. Belirli bir model icin `models/rvc/registry.json`
+icinde `engine: "applio"` kullanarak dogrudan Applio secilebilir.
+
 ### Hugging Face RVC/FreeVC import
 
 OmniSpeech, Hugging Face'ten secilmis RVC ve FreeVC varliklarini yerel
@@ -133,6 +147,8 @@ RVC ise hedef sese ozel yerel `.pth/.index` model registry'si ile calisir.
 | `OMNISPEECH_AUTO_INSTALL_MSVC=1` | Windows'ta MSVC Build Tools otomatik kurulum denemesini acik tutar |
 | `OMNISPEECH_RVC_MODELS_DIR=models/rvc` | Yerel RVC registry ve model kok dizini |
 | `OMNISPEECH_RVC_DEVICE=cpu` | RVC inference cihaz secimi |
+| `OMNISPEECH_RVC_ENGINE=auto` | `auto`, `rvc-python` veya `applio` motor secimi |
+| `OMNISPEECH_APPLIO_ROOT=vendor/applio` | Opsiyonel Applio checkout dizini |
 | `OMNISPEECH_RVC_TEMP_DIR=.tmp/rvc` | RVC gecici WAV calisma dizini |
 | `OMNISPEECH_FREEVC_ASSETS_DIR=models/hf/freevc-24` | Hugging Face'ten import edilen FreeVC Space dosyalari |
 | `OMNISPEECH_FREEVC_DEVICE=cpu` | FreeVC inference cihaz secimi |

@@ -10,6 +10,7 @@ type GenderMode = "male_to_female" | "female_to_male" | "adult_to_child" | "adul
 type NavigationKey = "workspace" | "evaluation" | "settings";
 type InputMode = "file" | "mic";
 type FeatureTab = "f0" | "mfcc" | "energy";
+type QualityFeedbackKey = "clean" | "muffled" | "harsh" | "robotic" | "too_thin" | "too_thick" | "noisy" | "unnatural";
 
 type LogEntry = {
   time: string;
@@ -69,6 +70,17 @@ const genderModeDescriptions: Record<GenderMode, string> = {
   adult_to_child:   "Yüksek perde ve küçük vokal şekli",
   adult_to_elderly: "Yaşlı timbr ile yumuşak perde kayması",
   child_to_adult:   "Düşük perde ve dolgun yetişkin tonu",
+};
+
+const qualityFeedbackLabels: Record<QualityFeedbackKey, string> = {
+  clean: "Temiz",
+  muffled: "Boguk",
+  harsh: "Cizirtili",
+  robotic: "Robotik",
+  too_thin: "Cok ince",
+  too_thick: "Cok kalin",
+  noisy: "Parazitli",
+  unnatural: "Dogal degil",
 };
 
 function nowClock() {
@@ -406,6 +418,10 @@ export default function App() {
 
   const [backendReady, setBackendReady] = useState(false);
   const [isConverting, setIsConverting] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
+  const [useAiEngines, setUseAiEngines] = useState(false);
+  const [feedbackPending, setFeedbackPending] = useState<QualityFeedbackKey | null>(null);
+  const [lastFeedback, setLastFeedback] = useState<QualityFeedbackKey | null>(null);
   const [isLive, setIsLive] = useState(false);
   const [liveSessionId, setLiveSessionId] = useState<string | null>(null);
   const [isRecording, setIsRecording] = useState(false);
@@ -444,6 +460,13 @@ export default function App() {
     setLogEntries((prev) => [...prev, { time: nowClock(), text, pending }].slice(-100));
   };
 
+  const engineModeLabel = useAiEngines ? "RVC/FreeVC" : "Pure DSP";
+  const toggleEngineMode = () => {
+    const next = !useAiEngines;
+    setUseAiEngines(next);
+    addLog(`Motor modu: ${next ? "RVC/FreeVC" : "Pure DSP"}`);
+  };
+
   const moduleButtons = useMemo(() => (Object.keys(moduleMeta) as ModuleKey[]).map((key) => ({ key, ...moduleMeta[key] })), []);
   const activeTask = useMemo(
     () =>
@@ -458,13 +481,25 @@ export default function App() {
               : "gender_age",
     [activeModule],
   );
+  const dspProfileName = useMemo(() => {
+    if (activeTask === "emotion") return `emotion.${selectedEmotion}`;
+    if (activeTask === "gender_age") return `gender_age.${selectedGenderMode}`;
+    if (activeTask === "celebrity") return `licensed_profile.${selectedCelebrity}`;
+    if (activeTask === "speaker_clone") return `speaker_clone.${referenceFiles.length ? "reference" : "identity"}`;
+    return `singing.${midiFile ? "midi" : "manual"}`;
+  }, [activeTask, midiFile, referenceFiles.length, selectedCelebrity, selectedEmotion, selectedGenderMode]);
 
   const metricValues = useMemo(() => {
     const processingSeconds = metrics.processing_seconds ?? 1.4;
     const latencyMs = Math.max(1, Math.round(processingSeconds * 1000));
     const fidelity = metrics.snr_estimate_db ? Math.max(1, Math.min(5, metrics.snr_estimate_db / 8.5 + 2.2)) : 4.2;
     const intelligibility = metrics.output_median_f0 ? Math.max(1, Math.min(5, 3.2 + Math.abs((metrics.output_median_f0 - (metrics.input_median_f0 ?? 0)) / 400))) : 3.8;
-    return { latencyMs, processingSeconds, fidelity, intelligibility };
+    const artifactScore = Math.max(0, Math.min(100, Math.round((metrics.post_artifact_score ?? 0) * 100)));
+    const pitchStability = Math.max(0, Math.min(100, Math.round((metrics.post_pitch_stability ?? 1) * 100)));
+    const spectrogramScore = Math.max(0, Math.min(100, Math.round((metrics.post_spectrogram_artifact_score ?? 0) * 100)));
+    const optimizerCandidates = Math.max(0, Math.round(metrics.dsp_quality_candidates ?? 0));
+    const optimizerImprovement = Math.max(0, Math.min(100, Math.round((metrics.dsp_quality_score_improvement ?? 0) * 100)));
+    return { latencyMs, processingSeconds, fidelity, intelligibility, artifactScore, pitchStability, spectrogramScore, optimizerCandidates, optimizerImprovement };
   }, [metrics]);
 
   const redraw = () => {
@@ -876,17 +911,17 @@ export default function App() {
     }
 
     setIsConverting(true);
-    addLog(`Dönüşüm başladı: ${moduleMeta[activeModule].labelTr}`, true);
+    addLog(`Dönüşüm başladı: ${moduleMeta[activeModule].labelTr} | Motor: ${engineModeLabel}`, true);
 
     try {
       let result: ConversionPayload;
 
       if (activeTask === "emotion") {
-        result = await api.convertEmotion(inputPath, selectedEmotion, pitchValue, rateValue, energyValue, null);
+        result = await api.convertEmotion(inputPath, selectedEmotion, pitchValue, rateValue, energyValue, null, useAiEngines);
       } else if (activeTask === "gender_age") {
-        result = await api.convertGenderAge(inputPath, selectedGenderMode, null);
+        result = await api.convertGenderAge(inputPath, selectedGenderMode, null, useAiEngines);
       } else if (activeTask === "celebrity") {
-        result = await api.convertCelebrity(inputPath, selectedCelebrity, null);
+        result = await api.convertCelebrity(inputPath, selectedCelebrity, null, useAiEngines);
       } else if (activeTask === "speaker_clone") {
         let refs = referenceFiles;
         if (refs.length === 0) {
@@ -895,10 +930,10 @@ export default function App() {
         if (refs.length === 0) {
           throw new Error("Konuşmacı klonu için referans dosya gerekli");
         }
-        result = await api.convertSpeakerClone(inputPath, refs, null);
+        result = await api.convertSpeakerClone(inputPath, refs, null, useAiEngines);
       } else {
         const pitchContour = midiFile ? null : [manualPitchHz(pitchValue)];
-        result = await api.convertSinging(inputPath, midiFile, pitchContour, null);
+        result = await api.convertSinging(inputPath, midiFile, pitchContour, null, useAiEngines);
       }
 
       const nextOutputPath = getOutputPath(result);
@@ -918,6 +953,50 @@ export default function App() {
       addLog(`Dönüşüm başarısız: ${normalizeError(err)}`, true);
     } finally {
       setIsConverting(false);
+    }
+  };
+
+  const sendQualityFeedback = async (feedback: QualityFeedbackKey) => {
+    if (!outputPath) {
+      addLog("Kalite geri bildirimi icin once cikti olustur", true);
+      return;
+    }
+
+    const ready = await ensureBackend();
+    if (!ready) {
+      return;
+    }
+
+    setFeedbackPending(feedback);
+    try {
+      await api.sendDspFeedback(dspProfileName, feedback);
+      setLastFeedback(feedback);
+      addLog(`Kalite geri bildirimi kaydedildi: ${qualityFeedbackLabels[feedback]}`);
+    } catch (err) {
+      addLog(`Kalite geri bildirimi kaydedilemedi: ${normalizeError(err)}`, true);
+    } finally {
+      setFeedbackPending(null);
+    }
+  };
+
+  const exportOutput = async () => {
+    if (!outputPath) {
+      addLog("Export icin once cikti olustur", true);
+      return;
+    }
+
+    setIsExporting(true);
+    try {
+      const exportedPath = await api.exportAudioFile(outputPath);
+      if (exportedPath) {
+        addLog(`Cikti export edildi: ${basename(exportedPath)}`);
+      } else {
+        addLog("Export iptal edildi");
+      }
+    } catch (err) {
+      addLog(`Export basarisiz: ${normalizeError(err)}`, true);
+    } finally {
+      setIsExporting(false);
     }
   };
 
@@ -1031,7 +1110,7 @@ export default function App() {
         <div className="logo">
           <div className="logo-icon">S</div>
           <div>
-            <div className="logo-text">SpeechWarp</div>
+            <div className="logo-text">OmniSpeech</div>
             <div className="logo-sub">v0.9 · CENG 384</div>
           </div>
         </div>
@@ -1040,6 +1119,18 @@ export default function App() {
           <span className="status-text">{statusText}</span>
           <div className="tag">{moduleMeta[activeModule].labelTr}</div>
           <div className="tag">{inputMode === "mic" ? "Mikrofon" : "Dosya"}</div>
+          <button
+            aria-pressed={useAiEngines}
+            className={`engine-switch ${useAiEngines ? "ai" : ""}`}
+            onClick={toggleEngineMode}
+            title="RVC/FreeVC motorlarini ac/kapat"
+            type="button"
+          >
+            <span className="engine-switch-track">
+              <span className="engine-switch-thumb" />
+            </span>
+            <span className="engine-switch-text">{engineModeLabel}</span>
+          </button>
         </div>
       </header>
 
@@ -1111,6 +1202,9 @@ export default function App() {
                   </button>
                   <button className={`btn-xs ${inputMode === "mic" ? "active" : ""}`} onClick={() => setInputMode("mic")} type="button">
                     MİK
+                  </button>
+                  <button className={`btn-xs ${outputPath ? "export-active" : ""}`} disabled={!outputPath || isExporting} onClick={() => void exportOutput()} type="button">
+                    {isExporting ? "..." : "EXPORT"}
                   </button>
                 </div>
               </div>
@@ -1220,6 +1314,18 @@ export default function App() {
                 </div>
               </div>
 
+              {outputPath ? (
+                <div className="output-export-bar">
+                  <div className="output-export-copy">
+                    <span className="selection-label">Cikti Hazir</span>
+                    <span className="selection-value">{basename(outputPath)}</span>
+                  </div>
+                  <button className="output-export-btn" disabled={isExporting} onClick={() => void exportOutput()} type="button">
+                    {isExporting ? "Export ediliyor..." : "Ciktiyi Export Et"}
+                  </button>
+                </div>
+              ) : null}
+
               <div className="waveform-area">
                 <div className="waveform-label">orijinal</div>
                 <div className="waveform-label right">{playbackDuration.toFixed(1)}s</div>
@@ -1242,6 +1348,9 @@ export default function App() {
                   </div>
                 </div>
                 <span className="time-text">{formatTime(progress * playbackDuration)} / {formatTime(playbackDuration)}</span>
+                <button className="export-btn" disabled={!outputPath || isExporting} onClick={() => void exportOutput()} type="button">
+                  {isExporting ? "..." : "Export"}
+                </button>
                 <audio
                   onEnded={() => { setPlaying(false); setProgress(1); }}
                   onLoadedMetadata={(event) => {
@@ -1354,6 +1463,10 @@ export default function App() {
           <div className="metric-card ok"><div className="metric-label">İŞLEM SÜRESİ</div><div className="metric-val">{metricValues.processingSeconds.toFixed(2)} <span>s</span></div></div>
           <div className="metric-card"><div className="metric-label">DOĞRULUK</div><div className="metric-val">{metricValues.fidelity.toFixed(1)} <span>/5</span></div></div>
           <div className="metric-card ok"><div className="metric-label">ANLAŞILIRLIK</div><div className="metric-val">{metricValues.intelligibility.toFixed(1)} <span>/5</span></div></div>
+          <div className={`metric-card ${metricValues.artifactScore <= 24 ? "ok" : ""}`}><div className="metric-label">ARTIFACT</div><div className="metric-val">{metricValues.artifactScore} <span>%</span></div></div>
+          <div className={`metric-card ${metricValues.spectrogramScore <= 24 ? "ok" : ""}`}><div className="metric-label">SPEC</div><div className="metric-val">{metricValues.spectrogramScore}<span>%</span></div></div>
+          <div className={`metric-card ${metricValues.pitchStability >= 72 ? "ok" : ""}`}><div className="metric-label">PITCH STAB</div><div className="metric-val">{metricValues.pitchStability} <span>%</span></div></div>
+          <div className={`metric-card ${metricValues.optimizerCandidates > 0 ? "ok" : ""}`}><div className="metric-label">AUTO OPT</div><div className="metric-val">{metricValues.optimizerImprovement}<span>%</span></div></div>
         </section>
       </main>
 
@@ -1464,6 +1577,25 @@ export default function App() {
           ) : null}
         </div>
 
+        {outputPath ? (
+          <div className="quality-feedback">
+            <div className="panel-title">Kalite</div>
+            <div className="quality-grid">
+              {(Object.keys(qualityFeedbackLabels) as QualityFeedbackKey[]).map((feedback) => (
+                <button
+                  className={`quality-btn ${lastFeedback === feedback ? "selected" : ""}`}
+                  disabled={feedbackPending !== null}
+                  key={feedback}
+                  onClick={() => void sendQualityFeedback(feedback)}
+                  type="button"
+                >
+                  {feedbackPending === feedback ? "..." : qualityFeedbackLabels[feedback]}
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : null}
+
         <div className="panel-live">
           <div className="panel-title">Canlı Mod</div>
           <div className="check-row">
@@ -1486,6 +1618,9 @@ export default function App() {
 
         <button className="convert-btn" disabled={Boolean(convertBlockedReason) || isConverting} onClick={() => void runConvert()} type="button">
           {convertButtonLabel}
+        </button>
+        <button className="export-action-btn" disabled={!outputPath || isExporting} onClick={() => void exportOutput()} type="button">
+          {isExporting ? "Export ediliyor..." : "Ciktiyi Export Et"}
         </button>
 
         <div>

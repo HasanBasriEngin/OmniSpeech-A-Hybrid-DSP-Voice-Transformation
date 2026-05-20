@@ -13,8 +13,14 @@ class BackendSettings(BaseModel):
     live_sample_rate: int = Field(default=22050)
     rvc_models_dir: str = Field(default_factory=lambda: os.getenv("OMNISPEECH_RVC_MODELS_DIR", "models/rvc"))
     rvc_device: str = Field(default_factory=lambda: os.getenv("OMNISPEECH_RVC_DEVICE", "cpu"))
+    rvc_engine: str = Field(default_factory=lambda: os.getenv("OMNISPEECH_RVC_ENGINE", "auto"))
+    applio_root: str = Field(default_factory=lambda: os.getenv("OMNISPEECH_APPLIO_ROOT", "vendor/applio"))
     freevc_assets_dir: str = Field(default_factory=lambda: os.getenv("OMNISPEECH_FREEVC_ASSETS_DIR", "models/hf/freevc-24"))
     freevc_device: str = Field(default_factory=lambda: os.getenv("OMNISPEECH_FREEVC_DEVICE", os.getenv("OMNISPEECH_RVC_DEVICE", "cpu")))
+    freevc_profiles_dir: str = Field(
+        default_factory=lambda: os.getenv("OMNISPEECH_FREEVC_PROFILES_DIR", "models/freevc_profiles")
+    )
+    dsp_profiles_dir: str = Field(default_factory=lambda: os.getenv("OMNISPEECH_DSP_PROFILES_DIR", "models/dsp_profiles"))
 
 
 def _read_int(name: str, default: int) -> int:
@@ -36,8 +42,12 @@ def load_settings() -> BackendSettings:
         live_sample_rate=_read_int("OMNISPEECH_LIVE_SAMPLE_RATE", 22050),
         rvc_models_dir=os.getenv("OMNISPEECH_RVC_MODELS_DIR", "models/rvc"),
         rvc_device=os.getenv("OMNISPEECH_RVC_DEVICE", "cpu"),
+        rvc_engine=os.getenv("OMNISPEECH_RVC_ENGINE", "auto"),
+        applio_root=os.getenv("OMNISPEECH_APPLIO_ROOT", "vendor/applio"),
         freevc_assets_dir=os.getenv("OMNISPEECH_FREEVC_ASSETS_DIR", "models/hf/freevc-24"),
         freevc_device=os.getenv("OMNISPEECH_FREEVC_DEVICE", os.getenv("OMNISPEECH_RVC_DEVICE", "cpu")),
+        freevc_profiles_dir=os.getenv("OMNISPEECH_FREEVC_PROFILES_DIR", "models/freevc_profiles"),
+        dsp_profiles_dir=os.getenv("OMNISPEECH_DSP_PROFILES_DIR", "models/dsp_profiles"),
     )
 
 

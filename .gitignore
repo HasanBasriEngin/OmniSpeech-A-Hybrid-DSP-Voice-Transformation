@@ -37,5 +37,14 @@ models/rvc/**/*.onnx
 models/rvc/**/*.index
 models/rvc/**/*.zip
 models/rvc/**/*.safetensors
+models/freevc_profiles/registry.json
+models/freevc_profiles/**/*.wav
+models/freevc_profiles/**/*.flac
+models/freevc_profiles/**/*.mp3
+models/freevc_profiles/**/*.m4a
+models/dsp_profiles/registry.json
 models/hf/*
 !models/hf/README.md
+
+# Optional local checkout used by the Applio RVC bridge
+vendor/applio/
