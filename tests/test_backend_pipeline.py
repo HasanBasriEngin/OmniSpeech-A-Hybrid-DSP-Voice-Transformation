@@ -199,29 +199,36 @@ def test_speaker_clone_file_prefers_freevc_when_assets_are_available(monkeypatch
     sf.write(str(source_path), source, 22050)
     sf.write(str(reference_path), reference, 22050)
 
-    def fake_convert_file_with_freevc(
+    def fake_attempt_speaker_clone_with_freevc(
         input_path: str,
-        reference_path_arg: str,
+        reference_paths: list[str],
         sample_rate: int,
         **kwargs: object,
-    ) -> FreeVCConversionResult:
+    ) -> processor_module.FreeVCSpeakerCloneAttempt:
+        from backend.modules.freevc_adapter import FreeVCSpeakerCloneAttempt
+
         assert Path(input_path) == source_path
-        assert Path(reference_path_arg) == reference_path
+        assert reference_paths == [str(reference_path)]
         assert sample_rate == 22050
         assert kwargs["assets_dir"] == "models/hf/freevc-24"
-        return FreeVCConversionResult(
-            audio=np.asarray(source * 0.25, dtype=np.float32),
-            config=FreeVCModelConfig(
-                model_id="freevc-24-one-shot",
-                assets_dir=tmp_dir,
-                checkpoint_path=tmp_dir / "freevc-24.pth",
-                config_path=tmp_dir / "freevc-24.json",
-                speaker_encoder_path=tmp_dir / "speaker.pt",
-                wavlm_model="microsoft/wavlm-large",
+        metrics = {"freevc_engine": 1.0, "reference_quality_score": 0.8}
+        return FreeVCSpeakerCloneAttempt(
+            result=FreeVCConversionResult(
+                audio=np.asarray(source * 0.25, dtype=np.float32),
+                config=FreeVCModelConfig(
+                    model_id="freevc-24-one-shot",
+                    assets_dir=tmp_dir,
+                    checkpoint_path=tmp_dir / "freevc-24.pth",
+                    config_path=tmp_dir / "freevc-24.json",
+                    speaker_encoder_path=tmp_dir / "speaker.pt",
+                    wavlm_model="microsoft/wavlm-large",
+                ),
+                metrics=metrics,
             ),
+            metrics=metrics,
         )
 
-    monkeypatch.setattr(processor_module, "convert_file_with_freevc", fake_convert_file_with_freevc)
+    monkeypatch.setattr(processor_module, "attempt_speaker_clone_with_freevc", fake_attempt_speaker_clone_with_freevc)
 
     pipeline = VoiceConversionPipeline(sample_rate=22050, dsp_profiles_dir=str(tmp_dir / "dsp_profiles"))
     result = pipeline.convert_speaker_clone_file(str(source_path), [str(reference_path)])

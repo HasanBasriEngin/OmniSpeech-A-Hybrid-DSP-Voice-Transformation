@@ -27,7 +27,7 @@ from backend.modules.rvc_adapter import (
     get_gender_age_rvc_config,
     get_rvc_config,
 )
-from backend.modules.freevc_adapter import convert_file_with_freevc
+from backend.modules.freevc_adapter import attempt_speaker_clone_with_freevc, convert_file_with_freevc
 from backend.modules.freevc_profiles import get_freevc_reference_profile
 from backend.modules.singing import convert_to_singing
 from backend.modules.speaker_clone import clone_speaker
@@ -214,18 +214,30 @@ class VoiceConversionPipeline:
         clean = prepare_clean_speech(source, self.sample_rate)
 
         start = perf_counter()
-        freevc_result = None
+        freevc_engine = 0.0
+        freevc_metrics: dict[str, float] = {
+            "freevc_engine": 0.0,
+            "reference_count": float(len(reference_paths)),
+        }
+        freevc_attempt = None
         if use_ai_engines and reference_paths:
-            freevc_result = convert_file_with_freevc(
+            freevc_attempt = attempt_speaker_clone_with_freevc(
                 input_path,
-                reference_paths[0],
+                reference_paths,
                 self.sample_rate,
                 assets_dir=self.freevc_assets_dir,
                 device=self.freevc_device,
             )
+            freevc_metrics.update(freevc_attempt.metrics)
 
-        if freevc_result is None:
-            references = [prepare_clean_speech(load_audio_mono(path, self.sample_rate), self.sample_rate).audio for path in reference_paths]
+        if freevc_attempt is not None and freevc_attempt.result is not None:
+            converted = freevc_attempt.result.audio
+            freevc_engine = float(freevc_metrics.get("freevc_engine", 1.0))
+        else:
+            references = [
+                prepare_clean_speech(load_audio_mono(path, self.sample_rate), self.sample_rate).audio
+                for path in reference_paths
+            ]
             converted = clone_speaker(clean.audio, self.sample_rate, references)
             settings = get_dsp_profile_settings(profile_name, profiles_dir=self.dsp_profiles_dir)
             converted = merge_preserving_noise_regions(
@@ -236,9 +248,8 @@ class VoiceConversionPipeline:
                 smoothing=settings.formant_smoothing,
             )
             freevc_engine = 0.0
-        else:
-            converted = freevc_result.audio
-            freevc_engine = 1.0
+            freevc_metrics["freevc_engine"] = 0.0
+
         engine = "freevc" if freevc_engine >= 1.0 else "dsp"
         converted, dsp_metrics = self._post_filter_with_autotune(converted, profile_name, engine=engine)
         elapsed = perf_counter() - start
@@ -247,6 +258,7 @@ class VoiceConversionPipeline:
         metrics = self._build_metrics(source, converted, elapsed)
         metrics.update(clean.metrics)
         metrics.update(dsp_metrics)
+        metrics.update(freevc_metrics)
         metrics["reference_count"] = float(len(reference_paths))
         metrics["ai_engines_enabled"] = 1.0 if use_ai_engines else 0.0
         metrics["freevc_engine"] = freevc_engine

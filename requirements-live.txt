@@ -1,0 +1,4 @@
+# Opsiyonel: yalnizca PyAudio tabanli canli ses akisi gerekiyorsa.
+# Windows'ta genelde once PortAudio SDK veya hazir wheel gerekir.
+# OmniSpeech backend su an sounddevice kullanir; bu dosya zorunlu degildir.
+pyaudio>=0.2.13
