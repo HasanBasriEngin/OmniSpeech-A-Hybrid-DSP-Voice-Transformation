@@ -5,72 +5,74 @@ import logging
 import numpy as np
 
 from backend.audio.features import pitch_shift_audio, stretch_to_length, time_stretch_audio
-from backend.audio.pure_dsp import analyze_speech_regions
+from backend.audio.pure_dsp import analyze_speech_regions, phase_align_to_guide
 
 logger = logging.getLogger(__name__)
 
 
 EMOTION_PROFILES: dict[str, dict[str, float]] = {
     "sad": {
-        "pitch_shift": -5.0,
-        "rate": 0.78,
-        "spectral_tilt": -3.4,
-        "prosody_depth": 0.22,
-        "drive": 0.82,
+        "pitch_shift": -1.6,
+        "rate": 0.88,
+        "spectral_tilt": -1.4,
+        "prosody_depth": 0.08,
+        "drive": 0.86,
         "target_rms": 0.075,
-        "attack": 0.55,
-        "breath": 0.02,
-        "jitter": 0.012,
-        "vibrato_rate": 4.1,
-        "vibrato_depth": 0.16,
+        "attack": 0.12,
+        "breath": 0.012,
+        "jitter": 0.002,
+        "vibrato_rate": 0.0,
+        "vibrato_depth": 0.0,
     },
     "angry": {
-        "pitch_shift": 5.2,
-        "rate": 1.12,
-        "spectral_tilt": 3.2,
-        "prosody_depth": 0.30,
-        "drive": 1.45,
-        "target_rms": 0.16,
-        "attack": 0.95,
-        "breath": 0.01,
-        "jitter": 0.010,
+        "pitch_shift": 1.0,
+        "rate": 1.08,
+        "spectral_tilt": 1.35,
+        "prosody_depth": 0.10,
+        "drive": 1.07,
+        "target_rms": 0.095,
+        "max_rms": 0.105,
+        "rms_peak_ceiling": 0.90,
+        "attack": 0.30,
+        "breath": 0.0,
+        "jitter": 0.003,
         "vibrato_rate": 0.0,
         "vibrato_depth": 0.0,
     },
     "excited": {
         "pitch_shift": 1.2,
-        "rate": 1.03,
-        "spectral_tilt": 0.9,
-        "prosody_depth": 0.10,
-        "drive": 1.03,
-        "target_rms": 0.105,
-        "attack": 0.22,
+        "rate": 1.10,
+        "spectral_tilt": 1.0,
+        "prosody_depth": 0.11,
+        "drive": 1.04,
+        "target_rms": 0.115,
+        "attack": 0.24,
         "breath": 0.003,
         "jitter": 0.0,
         "vibrato_rate": 0.0,
         "vibrato_depth": 0.0,
     },
     "whisper": {
-        "pitch_shift": -1.0,
-        "rate": 0.92,
-        "spectral_tilt": 2.1,
-        "prosody_depth": 0.08,
+        "pitch_shift": 0.0,
+        "rate": 0.96,
+        "spectral_tilt": 1.6,
+        "prosody_depth": 0.04,
         "drive": 0.58,
         "target_rms": 0.045,
-        "attack": 0.25,
-        "breath": 0.30,
-        "jitter": 0.006,
+        "attack": 0.10,
+        "breath": 0.24,
+        "jitter": 0.002,
         "vibrato_rate": 0.0,
         "vibrato_depth": 0.0,
     },
     "calm": {
-        "pitch_shift": -1.4,
-        "rate": 0.94,
-        "spectral_tilt": -1.4,
-        "prosody_depth": 0.04,
-        "drive": 0.82,
+        "pitch_shift": -0.4,
+        "rate": 0.97,
+        "spectral_tilt": -0.5,
+        "prosody_depth": 0.03,
+        "drive": 0.88,
         "target_rms": 0.09,
-        "attack": 0.20,
+        "attack": 0.08,
         "breath": 0.0,
         "jitter": 0.0,
         "vibrato_rate": 0.0,
@@ -79,11 +81,11 @@ EMOTION_PROFILES: dict[str, dict[str, float]] = {
 }
 
 FORMANT_FACTORS: dict[str, tuple[float, float, float]] = {
-    "sad": (0.92, 0.96, 0.98),
-    "angry": (1.08, 1.07, 1.04),
-    "excited": (1.014, 1.01, 1.006),
-    "whisper": (1.02, 1.10, 1.16),
-    "calm": (0.98, 0.99, 1.00),
+    "sad": (0.98, 0.99, 1.00),
+    "angry": (1.02, 1.02, 1.01),
+    "excited": (1.012, 1.01, 1.006),
+    "whisper": (1.01, 1.05, 1.08),
+    "calm": (0.99, 1.00, 1.00),
 }
 
 EMOTION_SEEDS = {
@@ -238,13 +240,13 @@ def _region_mix_mask(source: np.ndarray, sample_rate: int, emotion: str, *, stag
         if stage == "pitch":
             voiced_mix, unvoiced_mix, silence_mix, transient_mix = 0.82, 0.12, 0.0, 0.20
         else:
-            voiced_mix, unvoiced_mix, silence_mix, transient_mix = 0.76, 0.22, 0.04, 0.28
+            voiced_mix, unvoiced_mix, silence_mix, transient_mix = 0.76, 0.22, 0.0, 0.28
         smooth_ms = 32.0
     else:
         if stage == "pitch":
-            voiced_mix, unvoiced_mix, silence_mix, transient_mix = 0.92, 0.22, 0.02, 0.36
+            voiced_mix, unvoiced_mix, silence_mix, transient_mix = 0.92, 0.22, 0.0, 0.36
         else:
-            voiced_mix, unvoiced_mix, silence_mix, transient_mix = 0.90, 0.34, 0.08, 0.44
+            voiced_mix, unvoiced_mix, silence_mix, transient_mix = 0.90, 0.34, 0.0, 0.44
         smooth_ms = 24.0
 
     blend = np.zeros(x.size, dtype=np.float32)
@@ -254,7 +256,10 @@ def _region_mix_mask(source: np.ndarray, sample_rate: int, emotion: str, *, stag
     if masks.transient.size:
         blend[masks.transient > 0.5] = np.minimum(blend[masks.transient > 0.5], transient_mix)
 
-    return np.clip(_smooth_mask(blend, sample_rate, smooth_ms), 0.0, 1.0).astype(np.float32)
+    smoothed = np.clip(_smooth_mask(blend, sample_rate, smooth_ms), 0.0, 1.0).astype(np.float32)
+    if masks.silence.size:
+        smoothed[masks.silence > 0.5] = 0.0
+    return smoothed
 
 
 def _blend_with_source_regions(
@@ -270,8 +275,14 @@ def _blend_with_source_regions(
     if x.size == 0:
         return y
 
+    y = phase_align_to_guide(x, y, sample_rate, max_lag_ms=2.5)
     blend = _region_mix_mask(x, sample_rate, emotion, stage=stage)
-    return ((1.0 - blend) * x + blend * y).astype(np.float32)
+    mixed = ((1.0 - blend) * x + blend * y).astype(np.float32)
+    source_rms = float(np.sqrt(np.mean(x * x))) if x.size else 0.0
+    quiet = np.abs(x) <= max(1e-6, source_rms * 0.015)
+    if np.any(quiet):
+        mixed[quiet] = x[quiet]
+    return mixed.astype(np.float32)
 
 
 def _apply_formant_shift(audio: np.ndarray, sample_rate: int, factors: tuple[float, float, float]) -> np.ndarray:
@@ -364,12 +375,13 @@ def _apply_breathiness(audio: np.ndarray, amount: float, emotion: str) -> np.nda
     return ((1.0 - mix) * x + mix * airy).astype(np.float32)
 
 
-def _match_target_rms(audio: np.ndarray, target_rms: float) -> np.ndarray:
+def _match_target_rms(audio: np.ndarray, target_rms: float, *, peak_ceiling: float = 0.94) -> np.ndarray:
     current_rms = float(np.sqrt(np.mean(np.asarray(audio, dtype=np.float32) ** 2)) + 1e-8)
     scaled = np.asarray(audio, dtype=np.float32) * (target_rms / current_rms)
     peak = float(np.max(np.abs(scaled))) if scaled.size else 0.0
-    if peak > 0.98:
-        scaled = scaled * (0.98 / peak)
+    peak_ceiling = float(np.clip(peak_ceiling, 0.72, 0.98))
+    if peak > peak_ceiling:
+        scaled = scaled * (peak_ceiling / peak)
     return np.asarray(scaled, dtype=np.float32)
 
 
@@ -411,6 +423,7 @@ def convert_emotion(
     pitch_override: float | None = None,
     rate_override: float | None = None,
     energy_override: float | None = None,
+    preserve_duration: bool = True,
 ) -> np.ndarray:
     profile = EMOTION_PROFILES.get(emotion)
     if profile is None:
@@ -437,17 +450,20 @@ def convert_emotion(
     else:
         stretched = np.asarray(pitched, dtype=np.float32)
 
-    timed = stretch_to_length(np.asarray(stretched, dtype=np.float32), source.size)
+    timed = stretch_to_length(np.asarray(stretched, dtype=np.float32), source.size) if preserve_duration else np.asarray(stretched, dtype=np.float32)
     expressive = _apply_prosody(timed, sample_rate, profile["prosody_depth"], emotion)
     formed = _apply_formant_shift(expressive, sample_rate, FORMANT_FACTORS[emotion])
     attacked = _apply_attack_emphasis(formed, profile["attack"])
     driven = np.tanh(np.asarray(attacked * profile["drive"], dtype=np.float32))
-    presence_boost = 0.18 if emotion == "sad" else 0.52 if emotion == "angry" else 0.16 if emotion == "excited" else 0.12
+    presence_boost = 0.08 if emotion == "sad" else 0.24 if emotion == "angry" else 0.18 if emotion == "excited" else 0.10
     tilted = _apply_spectral_tilt(driven, profile["spectral_tilt"], presence_boost)
-    scaled = _match_target_rms(tilted, profile["target_rms"] * energy)
+    requested_rms = float(profile["target_rms"] * energy)
+    target_rms = min(requested_rms, float(profile.get("max_rms", requested_rms)))
+    scaled = _match_target_rms(tilted, target_rms, peak_ceiling=float(profile.get("rms_peak_ceiling", 0.94)))
 
     if profile["breath"] > 0:
         scaled = _apply_breathiness(scaled, profile["breath"], emotion)
 
-    blended = _blend_with_source_regions(source, scaled, sample_rate, emotion, stage="final")
+    source_guide = source if preserve_duration else stretch_to_length(source, scaled.size)
+    blended = _blend_with_source_regions(source_guide, scaled, sample_rate, emotion, stage="final")
     return np.clip(blended, -1.0, 1.0).astype(np.float32)

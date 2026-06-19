@@ -82,18 +82,39 @@ def time_stretch_audio(audio: np.ndarray, rate: float) -> np.ndarray:
         return x
 
     safe_rate = float(np.clip(rate, 0.25, 4.0))
+    if x.size >= 2048 and abs(safe_rate - 1.0) >= 1e-4 and 0.45 <= safe_rate <= 2.25:
+        try:
+            import librosa
+
+            stretched = librosa.effects.time_stretch(x.astype(np.float32), rate=safe_rate)
+            return np.asarray(stretched, dtype=np.float32)
+        except Exception:
+            pass
+
     target_length = max(1, int(round(x.size / safe_rate)))
     return stretch_to_length(x, target_length)
 
 
 def pitch_shift_audio(audio: np.ndarray, sample_rate: int, semitones: float) -> np.ndarray:
-    del sample_rate  # The lightweight implementation only needs the shift ratio.
-
     x = np.asarray(audio, dtype=np.float32)
     if x.size == 0:
         return x
     if abs(semitones) < 1e-4:
         return x
+
+    if sample_rate > 0 and x.size >= 2048:
+        try:
+            import librosa
+
+            shifted = librosa.effects.pitch_shift(
+                y=x.astype(np.float32),
+                sr=int(sample_rate),
+                n_steps=float(semitones),
+                bins_per_octave=12,
+            )
+            return stretch_to_length(np.asarray(shifted, dtype=np.float32), x.size)
+        except Exception:
+            pass
 
     ratio = float(2.0 ** (semitones / 12.0))
     shifted_length = max(1, int(round(x.size / max(ratio, 1e-4))))

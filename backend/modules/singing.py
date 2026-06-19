@@ -61,6 +61,7 @@ def convert_to_singing(
     sample_rate: int,
     midi_path: str | None,
     pitch_contour: list[float] | None,
+    preserve_duration: bool = True,
 ) -> np.ndarray:
     x = np.asarray(audio, dtype=np.float32)
     source_f0 = extract_pitch_contour(x, sample_rate)
@@ -69,16 +70,16 @@ def convert_to_singing(
     target_hz = _target_pitch_hz(midi_path, pitch_contour)
 
     semitone_delta = 12.0 * np.log2(max(target_hz, 1.0) / max(source_hz, 1.0))
-    semitone_delta = float(np.clip(semitone_delta, -12.0, 12.0))
+    semitone_delta = float(np.clip(semitone_delta, -7.0, 7.0))
     pitched = pitch_shift_audio(x, sample_rate, semitone_delta)
-    stretched = time_stretch_audio(np.asarray(pitched, dtype=np.float32), rate=0.92)
+    stretched = time_stretch_audio(np.asarray(pitched, dtype=np.float32), rate=0.90)
 
     # Mild spectral brightening to emulate sung phonation.
     spec = np.fft.rfft(stretched)
     freqs = np.linspace(0.0, 1.0, spec.size, dtype=np.float32)
-    tilt = 1.0 + 0.35 * np.exp(-((freqs - 0.28) ** 2) / (2 * 0.06**2))
+    tilt = 1.0 + 0.20 * np.exp(-((freqs - 0.28) ** 2) / (2 * 0.06**2))
     bright = np.fft.irfft(spec * tilt, n=stretched.size).astype(np.float32)
     sung = _legato_smooth(_apply_vibrato(bright, sample_rate), sample_rate)
 
-    out = stretch_to_length(sung, x.size)
+    out = stretch_to_length(sung, x.size) if preserve_duration else sung
     return np.clip(out, -1.0, 1.0).astype(np.float32)

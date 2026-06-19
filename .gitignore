@@ -45,6 +45,9 @@ models/freevc_profiles/**/*.m4a
 models/dsp_profiles/registry.json
 models/hf/*
 !models/hf/README.md
+models/openvoice/
+checkpoints/
 
-# Optional local checkout used by the Applio RVC bridge
+# Optional local checkouts used by external AI bridges
 vendor/applio/
+vendor/OpenVoice/

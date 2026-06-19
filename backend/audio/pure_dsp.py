@@ -78,6 +78,53 @@ def _smooth_mask(mask: np.ndarray, sample_rate: int, milliseconds: float = 18.0)
     return np.convolve(values, kernel, mode="same").astype(np.float32)
 
 
+def phase_align_to_guide(
+    guide: np.ndarray,
+    target: np.ndarray,
+    sample_rate: int,
+    *,
+    max_lag_ms: float = 3.0,
+    min_correlation: float = 0.12,
+) -> np.ndarray:
+    guide_x = _as_mono_float(guide)
+    target_x = stretch_to_length(_as_mono_float(target), guide_x.size)
+    if guide_x.size < 128 or sample_rate <= 0:
+        return target_x
+
+    max_lag = min(max(1, int(round(sample_rate * max_lag_ms / 1000.0))), guide_x.size // 8)
+    if max_lag <= 0:
+        return target_x
+
+    g = guide_x - float(np.mean(guide_x))
+    t = target_x - float(np.mean(target_x))
+    best_lag = 0
+    best_score = -1.0
+    for lag in range(-max_lag, max_lag + 1):
+        if lag < 0:
+            left = g[:lag]
+            right = t[-lag:]
+        elif lag > 0:
+            left = g[lag:]
+            right = t[:-lag]
+        else:
+            left = g
+            right = t
+        if left.size < 64 or right.size < 64:
+            continue
+        denom = float(np.linalg.norm(left) * np.linalg.norm(right) + 1e-8)
+        score = float(np.dot(left, right) / denom)
+        if score > best_score:
+            best_score = score
+            best_lag = lag
+
+    if best_lag == 0 or best_score < min_correlation:
+        return target_x
+    if best_lag > 0:
+        return np.concatenate([np.zeros(best_lag, dtype=np.float32), target_x[:-best_lag]]).astype(np.float32)
+    shift = -best_lag
+    return np.concatenate([target_x[shift:], np.zeros(shift, dtype=np.float32)]).astype(np.float32)
+
+
 def analyze_speech_regions(audio: np.ndarray, sample_rate: int) -> SpeechRegionMasks:
     x = _as_mono_float(audio)
     if x.size == 0:
@@ -123,11 +170,25 @@ def analyze_speech_regions(audio: np.ndarray, sample_rate: int) -> SpeechRegionM
     )
 
 
-def _rms_normalize(audio: np.ndarray, target_rms: float = 0.085, peak_ceiling: float = 0.92) -> np.ndarray:
+def _rms_normalize(
+    audio: np.ndarray,
+    target_rms: float = 0.075,
+    peak_ceiling: float = 0.92,
+    sample_rate: int | None = None,
+) -> np.ndarray:
     x = _as_mono_float(audio)
     if x.size == 0:
         return x
-    rms = float(np.sqrt(np.mean(x * x))) + 1e-8
+    level_source = x
+    if sample_rate is not None and sample_rate > 0 and x.size >= 64:
+        envelope = _local_rms(x, sample_rate, 24.0)
+        global_rms = float(np.sqrt(np.mean(x * x))) if x.size else 0.0
+        threshold = max(float(np.percentile(envelope, 55)) * 0.55, global_rms * 0.18, 1e-5)
+        active = envelope > threshold
+        if int(np.count_nonzero(active)) >= max(16, x.size // 20):
+            level_source = x[active]
+
+    rms = float(np.sqrt(np.mean(level_source * level_source))) + 1e-8
     scaled = x * float(target_rms / rms)
     peak = float(np.max(np.abs(scaled))) if scaled.size else 0.0
     if peak > peak_ceiling:
@@ -152,16 +213,14 @@ def prepare_clean_speech(audio: np.ndarray, sample_rate: int) -> PureDSPCleanRes
         declick=True,
         soft_limit=False,
         deess=True,
-        use_noisereduce=True,
+        use_noisereduce=False,
         use_pedalboard=False,
         deess_reduction_db=3.0,
     )
 
     masks = analyze_speech_regions(x, sample_rate)
-    if masks.silence.size:
-        x = (x * (1.0 - 0.62 * masks.silence)).astype(np.float32)
 
-    x = _rms_normalize(x)
+    x = _rms_normalize(x, sample_rate=sample_rate)
     x = apply_post_filter(
         x,
         sample_rate,
@@ -181,6 +240,7 @@ def prepare_clean_speech(audio: np.ndarray, sample_rate: int) -> PureDSPCleanRes
     after_rms = float(np.sqrt(np.mean(x * x))) if x.size else 0.0
     metrics = {
         "pure_dsp_input_cleaned": 1.0,
+        "pure_dsp_silence_preserved": 1.0,
         "pure_dsp_pre_peak": round(before_peak, 6),
         "pure_dsp_pre_rms": round(before_rms, 6),
         "pure_dsp_clean_peak": round(after_peak, 6),
@@ -200,15 +260,21 @@ def merge_preserving_noise_regions(
     *,
     intensity: float = 1.0,
     smoothing: float = 1.0,
+    preserve_length: bool = True,
 ) -> np.ndarray:
     source = _as_mono_float(clean_source)
-    target = stretch_to_length(_as_mono_float(converted), source.size)
-    if source.size == 0:
+    converted_target = _as_mono_float(converted)
+    target_length = source.size if preserve_length else converted_target.size
+    target = stretch_to_length(converted_target, target_length)
+    guide = stretch_to_length(source, target_length)
+    if guide.size == 0:
         return target
 
-    masks = analyze_speech_regions(source, sample_rate)
+    target = phase_align_to_guide(guide, target, sample_rate, max_lag_ms=3.0)
+    masks = analyze_speech_regions(guide, sample_rate)
     blend = masks.blend
     smooth_ms = float(np.clip(16.0 * max(smoothing, 0.35), 8.0, 42.0))
     blend = _smooth_mask(blend, sample_rate, milliseconds=smooth_ms)
     blend = np.clip(blend * float(np.clip(intensity, 0.35, 1.18)), 0.0, 1.0)
-    return ((1.0 - blend) * source + blend * target).astype(np.float32)
+    blend = np.clip(blend * blend * (3.0 - 2.0 * blend), 0.0, 1.0)
+    return ((1.0 - blend) * guide + blend * target).astype(np.float32)

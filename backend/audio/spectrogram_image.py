@@ -36,8 +36,8 @@ def preprocess_spectrogram_for_model(
     sample_rate: int,
     *,
     target_size: tuple[int, int] = (256, 256),
-    blur_kernel: int = 3,
-    blend: float = 0.35,
+    blur_kernel: int = 1,
+    blend: float = 0.12,
 ) -> SpectrogramImageResult:
     """
     Treat the STFT magnitude as an image, process it with OpenCV, and rebuild audio.
@@ -110,7 +110,9 @@ def preprocess_spectrogram_for_model(
     restored = np.clip(np.asarray(restored, dtype=np.float32), 0.0, 1.0)
     restored_log = restored * log_range + log_min
     processed_mag = np.expm1(restored_log).astype(np.float32)
-    mixed_mag = ((1.0 - safe_blend) * magnitude + safe_blend * processed_mag).astype(np.float32)
+    ratio = processed_mag / np.maximum(magnitude, 1e-7)
+    ratio = np.clip(ratio, 0.76, 1.24)
+    mixed_mag = (magnitude * ((1.0 - safe_blend) + safe_blend * ratio)).astype(np.float32)
     rebuilt_spec = mixed_mag.astype(np.complex64) * phase
 
     try:

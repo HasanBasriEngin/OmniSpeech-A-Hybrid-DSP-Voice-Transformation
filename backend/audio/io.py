@@ -12,6 +12,7 @@ import logging
 import warnings
 from math import gcd
 from pathlib import Path
+from uuid import uuid4
 
 import librosa
 import numpy as np
@@ -170,4 +171,14 @@ def save_audio(path: str, audio: np.ndarray, sample_rate: int) -> str:
 def default_output_path(input_path: str, suffix: str) -> str:
     """Girdi dosyasının yanında suffix ile yeni bir WAV yolu oluştur."""
     source = Path(input_path).expanduser().resolve()
-    return str(source.with_stem(f"{source.stem}_{suffix}").with_suffix(".wav"))
+    output_stem = f"{source.stem}_{suffix}"
+    output = source.with_stem(output_stem).with_suffix(".wav")
+    if not output.exists():
+        return str(output)
+
+    for index in range(2, 1000):
+        candidate = source.with_stem(f"{output_stem}_{index}").with_suffix(".wav")
+        if not candidate.exists():
+            return str(candidate)
+
+    return str(source.with_stem(f"{output_stem}_{uuid4().hex[:8]}").with_suffix(".wav"))

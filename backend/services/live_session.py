@@ -84,6 +84,7 @@ class LiveSessionManager:
     ) -> LiveSession:
         session_id = str(uuid4())
         router = None
+        self.pipeline.apply_system_clownfish_for_task(task, options)
         if route_to_virtual_mic:
             router = VirtualMicRouter(sample_rate=self.sample_rate)
             router.open(preferred_device=virtual_mic_device)

@@ -28,53 +28,53 @@ from backend.audio.features import pitch_shift_audio
 CONVERSION_PRESETS: dict[str, dict] = {
     # pitch_shift daha rafine (5.8 → 4.5), warp daha ılımlı (1.24 → 1.20)
     "male_to_female": {
-        "pitch_shift": 4.5,
-        "warp": 1.20,
-        "brightness": 0.30,
-        "warmth": -0.06,
-        "breath": 0.004,
+        "pitch_shift": 3.2,
+        "warp": 1.12,
+        "brightness": 0.18,
+        "warmth": -0.03,
+        "breath": 0.002,
         "chest_resonance": 0.0,   # Erkek rezonanssı katkısı yok
         "nasality": 0.0,           # Nazalizasyon yok
         "tremor_amount": 0.0,      # Titreme yok
     },
     # Daha doğal erkek sesi: chest resonance artırıldı, warp ayarlandı
     "female_to_male": {
-        "pitch_shift": -5.0,
-        "warp": 0.80,
-        "brightness": -0.25,
-        "warmth": 0.40,
-        "breath": 0.002,
-        "chest_resonance": 0.35,   # Göğüs rezonansı katkısı (yeni)
+        "pitch_shift": -3.6,
+        "warp": 0.88,
+        "brightness": -0.16,
+        "warmth": 0.26,
+        "breath": 0.001,
+        "chest_resonance": 0.24,   # Göğüs rezonansı katkısı (yeni)
         "nasality": 0.0,
         "tremor_amount": 0.0,
     },
     # Nazalizasyon eklendi; pitch biraz düşürüldü (7.2 → 6.8)
     "adult_to_child": {
-        "pitch_shift": 6.8,
-        "warp": 1.36,
-        "brightness": 0.42,
-        "warmth": -0.18,
-        "breath": 0.002,
+        "pitch_shift": 5.0,
+        "warp": 1.24,
+        "brightness": 0.24,
+        "warmth": -0.10,
+        "breath": 0.001,
         "chest_resonance": 0.0,
-        "nasality": 0.28,           # Nazalizasyon (yeni)
+        "nasality": 0.14,           # Nazalizasyon (yeni)
         "tremor_amount": 0.0,
     },
     # Tremor 0.045 → 0.075, nefes 0.028 → 0.048, pitch biraz artırıldı
     "adult_to_elderly": {
-        "pitch_shift": -2.0,
-        "warp": 0.88,
-        "brightness": -0.32,
-        "warmth": 0.22,
-        "breath": 0.018,            # Daha belirgin nefes (yeni)
+        "pitch_shift": -1.2,
+        "warp": 0.94,
+        "brightness": -0.18,
+        "warmth": 0.16,
+        "breath": 0.010,            # Daha belirgin nefes (yeni)
         "chest_resonance": 0.0,
         "nasality": 0.0,
-        "tremor_amount": 0.075,     # Daha fazla tremor (yeni)
+        "tremor_amount": 0.035,     # Daha fazla tremor (yeni)
     },
     "child_to_adult": {
-        "pitch_shift": -6.2,
-        "warp": 0.74,
-        "brightness": -0.18,
-        "warmth": 0.28,
+        "pitch_shift": -4.4,
+        "warp": 0.84,
+        "brightness": -0.12,
+        "warmth": 0.20,
         "breath": 0.0,
         "chest_resonance": 0.0,
         "nasality": 0.0,
@@ -344,10 +344,7 @@ def convert_gender_age(audio: np.ndarray, sample_rate: int, mode: str) -> np.nda
     pitched = pitch_shift_audio(x, sample_rate, preset["pitch_shift"])
 
     # 2. Spektral warp (kübik interpolasyon + phase coherence)
-    with torch.no_grad():
-        tensor = torch.from_numpy(np.asarray(pitched, dtype=np.float32))
-        warped = WARP_MODEL(tensor, preset["warp"]).cpu().numpy().astype(np.float32)
-    warped = _cepstral_formant_envelope_warp(warped, sample_rate, preset["warp"])
+    warped = _cepstral_formant_envelope_warp(pitched, sample_rate, preset["warp"], amount=0.30)
 
     # 3. Ton şekillendirme (brightness / warmth)
     shaped = _fft_tone_shape(warped, brightness=preset["brightness"], warmth=preset["warmth"])

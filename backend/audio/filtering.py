@@ -17,8 +17,8 @@ from scipy import signal
 
 logger = logging.getLogger(__name__)
 
-_SPEECH_LOW_HZ = 55.0
-_SPEECH_HIGH_HZ = 8_800.0
+_SPEECH_LOW_HZ = 70.0
+_SPEECH_HIGH_HZ = 7_800.0
 _DECLICK_BASE_THRESH = 0.08
 _DECLICK_WINDOW_MS = 2.5
 _SOFT_LIMIT_CEIL = 0.96
@@ -59,16 +59,16 @@ def _apply_pedalboard_post_filter(audio: np.ndarray, sample_rate: int) -> np.nda
         return x
 
     try:
-        from pedalboard import Compressor, HighpassFilter, Limiter, NoiseGate, Pedalboard
+        from pedalboard import Compressor, HighpassFilter, Limiter, LowpassFilter, Pedalboard
     except Exception:
         return None
 
     try:
         board = Pedalboard(
             [
-                NoiseGate(threshold_db=-34.0, ratio=1.8),
-                HighpassFilter(cutoff_frequency_hz=55.0),
-                Compressor(threshold_db=-20.0, ratio=3.5, attack_ms=4.0, release_ms=120.0),
+                HighpassFilter(cutoff_frequency_hz=_SPEECH_LOW_HZ),
+                LowpassFilter(cutoff_frequency_hz=min(_SPEECH_HIGH_HZ, sample_rate * 0.45)),
+                Compressor(threshold_db=-18.0, ratio=2.2, attack_ms=6.0, release_ms=150.0),
                 Limiter(threshold_db=-0.8, release_ms=60.0),
             ]
         )
@@ -96,8 +96,8 @@ def _apply_noisereduce(audio: np.ndarray, sample_rate: int) -> np.ndarray | None
             y=x,
             sr=sample_rate,
             stationary=False,
-            prop_decrease=0.55,
-            time_constant_s=1.2,
+            prop_decrease=0.28,
+            time_constant_s=1.6,
             freq_mask_smooth_hz=420,
             time_mask_smooth_ms=70,
         )
@@ -121,7 +121,7 @@ def _build_speech_band_sos(sample_rate: int) -> np.ndarray | None:
     if low_hz >= high_hz:
         return None
 
-    return signal.butter(4, [low_hz, high_hz], btype="bandpass", fs=sample_rate, output="sos")
+    return signal.butter(3, [low_hz, high_hz], btype="bandpass", fs=sample_rate, output="sos")
 
 
 def _speech_band_filter(audio: np.ndarray, sample_rate: int) -> np.ndarray:
@@ -263,6 +263,31 @@ def _soft_limit(
     return out.astype(np.float32)
 
 
+def _soft_knee_compress(
+    audio: np.ndarray,
+    *,
+    threshold: float = 0.80,
+    ratio: float = 2.25,
+    knee_width: float = 0.16,
+) -> np.ndarray:
+    x = _as_mono_float(audio)
+    if x.size == 0:
+        return x
+
+    threshold = float(np.clip(threshold, 0.20, 0.95))
+    ratio = float(np.clip(ratio, 1.0, 8.0))
+    knee_width = float(np.clip(knee_width, 0.01, 0.45))
+    if ratio <= 1.0001:
+        return x
+
+    abs_x = np.abs(x)
+    activation = np.clip((abs_x - threshold) / knee_width, 0.0, 1.0)
+    activation = activation * activation * (3.0 - 2.0 * activation)
+    compressed_mag = threshold + np.maximum(abs_x - threshold, 0.0) / ratio
+    target_mag = abs_x * (1.0 - activation) + compressed_mag * activation
+    return (np.sign(x) * target_mag).astype(np.float32)
+
+
 def _deess(audio: np.ndarray, sample_rate: int, *, reduction_db: float = _DESS_REDUCTION_DB) -> np.ndarray:
     """Reduce excessive sibilance when the high-frequency band dominates."""
     x = _as_mono_float(audio)
@@ -354,7 +379,7 @@ def apply_post_filter(
     deess: bool = True,
     knee_db: float = _DEFAULT_KNEE_DB,
     ceiling: float = _SOFT_LIMIT_CEIL,
-    use_noisereduce: bool = True,
+    use_noisereduce: bool = False,
     use_pedalboard: bool = True,
     deess_reduction_db: float = _DESS_REDUCTION_DB,
     post_gain_db: float = 0.0,
@@ -389,6 +414,12 @@ def apply_post_filter(
     if post_gain_db:
         x = (x * float(10.0 ** (post_gain_db / 20.0))).astype(np.float32)
     if soft_limit:
+        x = _soft_knee_compress(
+            x,
+            threshold=min(0.80, float(ceiling) * 0.86),
+            ratio=2.25,
+            knee_width=0.16,
+        )
         x = _soft_limit(x, ceiling=ceiling, knee_db=knee_db)
 
     return np.asarray(x, dtype=np.float32)
@@ -415,7 +446,7 @@ def post_filter_voice(
     x = apply_post_filter(
         x,
         sample_rate,
-        use_noisereduce=(not realtime) and _settings_bool(settings, "use_noisereduce", True),
+        use_noisereduce=(not realtime) and _settings_bool(settings, "use_noisereduce", False),
         use_pedalboard=(not realtime) and _settings_bool(settings, "use_pedalboard", True),
         ceiling=_settings_float(settings, "ceiling", _SOFT_LIMIT_CEIL, 0.82, 0.99),
         knee_db=_settings_float(settings, "knee_db", _DEFAULT_KNEE_DB, 0.0, 12.0),
@@ -456,5 +487,6 @@ class LiveVoicePostFilter:
         x = _declick(x, self.sample_rate)
         x = _decrackle(x, self.sample_rate)
         x = _deess(x, self.sample_rate)
+        x = _soft_knee_compress(x, threshold=0.80, ratio=2.25, knee_width=0.16)
         x = _soft_limit(x)
         return np.asarray(x, dtype=np.float32)

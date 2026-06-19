@@ -9,6 +9,7 @@ from uuid import uuid4
 
 import numpy as np
 
+from backend.audio.clownfish_presets import apply_clownfish_preset, effective_pitch_semitones, get_clownfish_preset
 from backend.audio.filtering import post_filter_voice
 from backend.audio.dsp_metrics import measure_audio_health
 from backend.audio.dsp_profiles import get_dsp_profile_settings, update_dsp_profile
@@ -29,11 +30,31 @@ from backend.modules.rvc_adapter import (
 )
 from backend.modules.freevc_adapter import convert_file_with_freevc
 from backend.modules.freevc_profiles import get_freevc_reference_profile
+from backend.modules.openvoice_adapter import clone_voice_with_openvoice, get_celebrity_reference_path
 from backend.modules.singing import convert_to_singing
 from backend.modules.speaker_clone import clone_speaker
+from backend.services import clownfish as clownfish_service
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 logger = logging.getLogger(__name__)
+
+EMOTION_PROFILES = {"angry", "calm", "excited", "sad", "whisper"}
+EMOTION_CLOWNFISH_PRESETS = {
+    "male_pitch",
+    "female_pitch",
+    "helium_pitch",
+    "baby_pitch",
+    "radio",
+    "robot",
+    "clone",
+    "custom_pitch",
+}
+GENDER_AGE_CLOWNFISH_PRESETS = {
+    "male_to_female": "female_pitch",
+    "female_to_male": "male_pitch",
+    "adult_to_child": "baby_pitch",
+}
+CELEBRITY_KEYS = ("adele", "james_earl_jones", "michael_jackson", "morgan_freeman", "taylor_swift")
 
 
 @dataclass
@@ -54,6 +75,9 @@ class VoiceConversionPipeline:
         freevc_assets_dir: str | None = None,
         freevc_device: str | None = None,
         freevc_profiles_dir: str | None = None,
+        openvoice_root: str | None = None,
+        openvoice_checkpoints_dir: str | None = None,
+        openvoice_device: str | None = None,
         dsp_profiles_dir: str | None = None,
     ) -> None:
         self.sample_rate = sample_rate
@@ -62,6 +86,13 @@ class VoiceConversionPipeline:
         self.freevc_assets_dir = freevc_assets_dir or SETTINGS.freevc_assets_dir
         self.freevc_device = freevc_device or SETTINGS.freevc_device
         self.freevc_profiles_dir = freevc_profiles_dir or SETTINGS.freevc_profiles_dir
+        self.openvoice_root = openvoice_root if openvoice_root is not None else SETTINGS.openvoice_root
+        self.openvoice_checkpoints_dir = (
+            openvoice_checkpoints_dir
+            if openvoice_checkpoints_dir is not None
+            else SETTINGS.openvoice_checkpoints_dir
+        )
+        self.openvoice_device = openvoice_device or SETTINGS.openvoice_device
         self.dsp_profiles_dir = dsp_profiles_dir or SETTINGS.dsp_profiles_dir
 
     def convert_emotion_file(
@@ -74,35 +105,67 @@ class VoiceConversionPipeline:
         output_path: str | None = None,
         *,
         use_ai_engines: bool = True,
+        clownfish_preset: str | None = None,
+        clownfish_pitch: float | None = None,
     ) -> PipelineResult:
         profile_name = self._dsp_profile_name("emotion", emotion)
         source = load_audio_mono(input_path, self.sample_rate)
         clean = prepare_clean_speech(source, self.sample_rate)
         start = perf_counter()
-        converted = convert_emotion(
-            clean.audio,
-            self.sample_rate,
-            emotion,
-            pitch_override=pitch_override,
-            rate_override=rate_override,
-            energy_override=energy_override,
-        )
-        settings = get_dsp_profile_settings(profile_name, profiles_dir=self.dsp_profiles_dir)
-        converted = merge_preserving_noise_regions(
-            clean.audio,
-            converted,
-            self.sample_rate,
-            intensity=settings.transform_intensity,
-            smoothing=settings.formant_smoothing,
-        )
+        emotion_clownfish_preset = self._emotion_clownfish_preset(emotion)
+        if emotion_clownfish_preset is not None:
+            effect_pitch = pitch_override if emotion_clownfish_preset == "custom_pitch" else clownfish_pitch
+            system_clownfish_metrics = self._apply_system_clownfish_style(
+                emotion_clownfish_preset,
+                clownfish_pitch=effect_pitch,
+            )
+            converted, clownfish_metrics = self._apply_clownfish_style(
+                clean.audio,
+                clownfish_preset=emotion_clownfish_preset,
+                clownfish_pitch=effect_pitch,
+            )
+        else:
+            if emotion not in EMOTION_PROFILES:
+                allowed = ", ".join(sorted(EMOTION_PROFILES | EMOTION_CLOWNFISH_PRESETS))
+                raise ValueError(f"Unsupported emotion '{emotion}'. Allowed: {allowed}")
+
+            system_clownfish_metrics = self._apply_system_clownfish_style(
+                clownfish_preset,
+                clownfish_pitch=clownfish_pitch,
+            )
+            converted = convert_emotion(
+                clean.audio,
+                self.sample_rate,
+                emotion,
+                pitch_override=pitch_override,
+                rate_override=rate_override,
+                energy_override=energy_override,
+                preserve_duration=False,
+            )
+            settings = get_dsp_profile_settings(profile_name, profiles_dir=self.dsp_profiles_dir)
+            converted = merge_preserving_noise_regions(
+                clean.audio,
+                converted,
+                self.sample_rate,
+                intensity=settings.transform_intensity,
+                smoothing=settings.formant_smoothing,
+                preserve_length=False,
+            )
+            converted, clownfish_metrics = self._apply_clownfish_style(
+                converted,
+                clownfish_preset=clownfish_preset,
+                clownfish_pitch=clownfish_pitch,
+            )
         converted, dsp_metrics = self._post_filter_with_autotune(converted, profile_name, engine="dsp")
         elapsed = perf_counter() - start
         path = save_audio(output_path or default_output_path(input_path, f"emotion_{emotion}"), converted, self.sample_rate)
         metrics = self._build_metrics(source, converted, elapsed)
         metrics.update(clean.metrics)
+        metrics.update(system_clownfish_metrics)
+        metrics.update(clownfish_metrics)
         metrics.update(dsp_metrics)
         metrics["ai_engines_enabled"] = 1.0 if use_ai_engines else 0.0
-        metrics["emotion_profile"] = float(sorted(["angry", "calm", "excited", "sad", "whisper"]).index(emotion))
+        metrics["emotion_profile"] = float(sorted(EMOTION_PROFILES).index(emotion)) if emotion in EMOTION_PROFILES else -1.0
         if pitch_override is not None:
             metrics["pitch_override"] = float(pitch_override)
         if rate_override is not None:
@@ -118,11 +181,18 @@ class VoiceConversionPipeline:
         output_path: str | None = None,
         *,
         use_ai_engines: bool = True,
+        clownfish_preset: str | None = None,
+        clownfish_pitch: float | None = None,
     ) -> PipelineResult:
         profile_name = self._dsp_profile_name("gender_age", mode)
         source = load_audio_mono(input_path, self.sample_rate)
         clean = prepare_clean_speech(source, self.sample_rate)
         start = perf_counter()
+        effective_clownfish_preset = clownfish_preset or self._default_clownfish_preset("gender_age", mode)
+        system_clownfish_metrics = self._apply_system_clownfish_style(
+            effective_clownfish_preset,
+            clownfish_pitch=clownfish_pitch,
+        )
         prepared = preprocess_spectrogram_for_model(clean.audio, self.sample_rate)
         temp_dir: Path | None = None
         try:
@@ -185,6 +255,11 @@ class VoiceConversionPipeline:
                 rvc_engine = 1.0
                 freevc_engine = 0.0
             engine = "rvc" if rvc_engine >= 1.0 else "freevc" if freevc_engine >= 1.0 else "dsp"
+            converted, clownfish_metrics = self._apply_clownfish_style(
+                converted,
+                clownfish_preset=effective_clownfish_preset,
+                clownfish_pitch=clownfish_pitch,
+            )
             converted, dsp_metrics = self._post_filter_with_autotune(converted, profile_name, engine=engine)
             elapsed = perf_counter() - start
         finally:
@@ -193,6 +268,8 @@ class VoiceConversionPipeline:
         path = save_audio(output_path or default_output_path(input_path, mode), converted, self.sample_rate)
         metrics = self._build_metrics(source, converted, elapsed)
         metrics.update(clean.metrics)
+        metrics.update(system_clownfish_metrics)
+        metrics.update(clownfish_metrics)
         metrics.update(dsp_metrics)
         metrics.update(prepared.metrics)
         metrics["ai_engines_enabled"] = 1.0 if use_ai_engines else 0.0
@@ -208,23 +285,58 @@ class VoiceConversionPipeline:
         output_path: str | None = None,
         *,
         use_ai_engines: bool = True,
+        clownfish_preset: str | None = None,
+        clownfish_pitch: float | None = None,
     ) -> PipelineResult:
         profile_name = self._dsp_profile_name("speaker_clone", "reference" if reference_paths else "identity")
         source = load_audio_mono(input_path, self.sample_rate)
         clean = prepare_clean_speech(source, self.sample_rate)
 
         start = perf_counter()
-        freevc_result = None
+        effective_clownfish_preset = clownfish_preset or self._default_clownfish_preset(
+            "speaker_clone",
+            "reference" if reference_paths else "identity",
+        )
+        system_clownfish_metrics = self._apply_system_clownfish_style(
+            effective_clownfish_preset,
+            clownfish_pitch=clownfish_pitch,
+        )
+        openvoice_result = None
+        openvoice_preprocess_metrics: dict[str, float] = {}
+        openvoice_temp_dir: Path | None = None
         if use_ai_engines and reference_paths:
-            freevc_result = convert_file_with_freevc(
-                input_path,
-                reference_paths[0],
+            openvoice_input_path, openvoice_reference_path, openvoice_temp_dir, openvoice_preprocess_metrics = (
+                self._write_openvoice_preprocessed_pair(
+                    clean.audio,
+                    reference_paths[0],
+                    "speaker_clone",
+                )
+            )
+            openvoice_result = clone_voice_with_openvoice(
+                openvoice_input_path,
+                openvoice_reference_path,
                 self.sample_rate,
-                assets_dir=self.freevc_assets_dir,
-                device=self.freevc_device,
+                device=self.openvoice_device,
+                openvoice_root=self.openvoice_root,
+                checkpoints_dir=self.openvoice_checkpoints_dir,
             )
 
-        if freevc_result is None:
+        freevc_result = None
+        if use_ai_engines and reference_paths:
+            if openvoice_result is None:
+                freevc_result = convert_file_with_freevc(
+                    input_path,
+                    reference_paths[0],
+                    self.sample_rate,
+                    assets_dir=self.freevc_assets_dir,
+                    device=self.freevc_device,
+                )
+
+        if openvoice_result is not None:
+            converted = openvoice_result
+            openvoice_engine = 1.0
+            freevc_engine = 0.0
+        elif freevc_result is None:
             references = [prepare_clean_speech(load_audio_mono(path, self.sample_rate), self.sample_rate).audio for path in reference_paths]
             converted = clone_speaker(clean.audio, self.sample_rate, references)
             settings = get_dsp_profile_settings(profile_name, profiles_dir=self.dsp_profiles_dir)
@@ -235,20 +347,33 @@ class VoiceConversionPipeline:
                 intensity=settings.transform_intensity,
                 smoothing=settings.formant_smoothing,
             )
+            openvoice_engine = 0.0
             freevc_engine = 0.0
         else:
             converted = freevc_result.audio
+            openvoice_engine = 0.0
             freevc_engine = 1.0
-        engine = "freevc" if freevc_engine >= 1.0 else "dsp"
+        engine = "openvoice" if openvoice_engine >= 1.0 else "freevc" if freevc_engine >= 1.0 else "dsp"
+        converted, clownfish_metrics = self._apply_clownfish_style(
+            converted,
+            clownfish_preset=effective_clownfish_preset,
+            clownfish_pitch=clownfish_pitch,
+        )
         converted, dsp_metrics = self._post_filter_with_autotune(converted, profile_name, engine=engine)
         elapsed = perf_counter() - start
+        if openvoice_temp_dir is not None:
+            self._cleanup_temp_dir(openvoice_temp_dir)
 
         path = save_audio(output_path or default_output_path(input_path, "speaker_clone"), converted, self.sample_rate)
         metrics = self._build_metrics(source, converted, elapsed)
         metrics.update(clean.metrics)
+        metrics.update(openvoice_preprocess_metrics)
+        metrics.update(system_clownfish_metrics)
+        metrics.update(clownfish_metrics)
         metrics.update(dsp_metrics)
         metrics["reference_count"] = float(len(reference_paths))
         metrics["ai_engines_enabled"] = 1.0 if use_ai_engines else 0.0
+        metrics["openvoice_engine"] = openvoice_engine
         metrics["freevc_engine"] = freevc_engine
         return PipelineResult(output_path=path, metrics=metrics)
 
@@ -260,17 +385,24 @@ class VoiceConversionPipeline:
         output_path: str | None = None,
         *,
         use_ai_engines: bool = True,
+        clownfish_preset: str | None = None,
+        clownfish_pitch: float | None = None,
     ) -> PipelineResult:
         profile_name = self._dsp_profile_name("singing", "midi" if midi_path else "manual")
         source = load_audio_mono(input_path, self.sample_rate)
         clean = prepare_clean_speech(source, self.sample_rate)
 
         start = perf_counter()
+        system_clownfish_metrics = self._apply_system_clownfish_style(
+            clownfish_preset,
+            clownfish_pitch=clownfish_pitch,
+        )
         converted = convert_to_singing(
             audio=clean.audio,
             sample_rate=self.sample_rate,
             midi_path=midi_path,
             pitch_contour=pitch_contour,
+            preserve_duration=False,
         )
         settings = get_dsp_profile_settings(profile_name, profiles_dir=self.dsp_profiles_dir)
         converted = merge_preserving_noise_regions(
@@ -279,6 +411,12 @@ class VoiceConversionPipeline:
             self.sample_rate,
             intensity=settings.transform_intensity,
             smoothing=settings.formant_smoothing,
+            preserve_length=False,
+        )
+        converted, clownfish_metrics = self._apply_clownfish_style(
+            converted,
+            clownfish_preset=clownfish_preset,
+            clownfish_pitch=clownfish_pitch,
         )
         converted, dsp_metrics = self._post_filter_with_autotune(converted, profile_name, engine="dsp")
         elapsed = perf_counter() - start
@@ -286,6 +424,8 @@ class VoiceConversionPipeline:
         path = save_audio(output_path or default_output_path(input_path, "singing"), converted, self.sample_rate)
         metrics = self._build_metrics(source, converted, elapsed)
         metrics.update(clean.metrics)
+        metrics.update(system_clownfish_metrics)
+        metrics.update(clownfish_metrics)
         metrics.update(dsp_metrics)
         metrics["ai_engines_enabled"] = 1.0 if use_ai_engines else 0.0
         return PipelineResult(output_path=path, metrics=metrics)
@@ -297,11 +437,17 @@ class VoiceConversionPipeline:
         output_path: str | None = None,
         *,
         use_ai_engines: bool = True,
+        clownfish_preset: str | None = None,
+        clownfish_pitch: float | None = None,
     ) -> PipelineResult:
         profile_name = self._dsp_profile_name("licensed_profile", celebrity)
         source = load_audio_mono(input_path, self.sample_rate)
         clean = prepare_clean_speech(source, self.sample_rate)
         start = perf_counter()
+        system_clownfish_metrics = self._apply_system_clownfish_style(
+            clownfish_preset,
+            clownfish_pitch=clownfish_pitch,
+        )
         prepared = preprocess_spectrogram_for_model(clean.audio, self.sample_rate)
         temp_dir: Path | None = None
         try:
@@ -323,7 +469,27 @@ class VoiceConversionPipeline:
                     models_dir=self.rvc_models_dir,
                     device=self.rvc_device,
                 )
-            if rvc_result is None:
+            celebrity_reference_path = get_celebrity_reference_path(celebrity)
+            openvoice_result = None
+            if use_ai_engines and rvc_result is None and celebrity_reference_path is not None:
+                openvoice_result = clone_voice_with_openvoice(
+                    input_path,
+                    celebrity_reference_path,
+                    self.sample_rate,
+                    device=self.openvoice_device,
+                    openvoice_root=self.openvoice_root,
+                    checkpoints_dir=self.openvoice_checkpoints_dir,
+                )
+
+            if rvc_result is not None:
+                converted = rvc_result.audio
+                rvc_engine = 1.0
+                openvoice_engine = 0.0
+            elif openvoice_result is not None:
+                converted = openvoice_result
+                rvc_engine = 0.0
+                openvoice_engine = 1.0
+            else:
                 converted = convert_celebrity(prepared.audio, self.sample_rate, celebrity)
                 settings = get_dsp_profile_settings(profile_name, profiles_dir=self.dsp_profiles_dir)
                 converted = merge_preserving_noise_regions(
@@ -334,10 +500,13 @@ class VoiceConversionPipeline:
                     smoothing=settings.formant_smoothing,
                 )
                 rvc_engine = 0.0
-            else:
-                converted = rvc_result.audio
-                rvc_engine = 1.0
-            engine = "rvc" if rvc_engine >= 1.0 else "dsp"
+                openvoice_engine = 0.0
+            engine = "rvc" if rvc_engine >= 1.0 else "openvoice" if openvoice_engine >= 1.0 else "dsp"
+            converted, clownfish_metrics = self._apply_clownfish_style(
+                converted,
+                clownfish_preset=clownfish_preset,
+                clownfish_pitch=clownfish_pitch,
+            )
             converted, dsp_metrics = self._post_filter_with_autotune(converted, profile_name, engine=engine)
             elapsed = perf_counter() - start
         finally:
@@ -346,48 +515,294 @@ class VoiceConversionPipeline:
         path = save_audio(output_path or default_output_path(input_path, f"celebrity_{celebrity}"), converted, self.sample_rate)
         metrics = self._build_metrics(source, converted, elapsed)
         metrics.update(clean.metrics)
+        metrics.update(system_clownfish_metrics)
+        metrics.update(clownfish_metrics)
         metrics.update(dsp_metrics)
         metrics.update(prepared.metrics)
         metrics["ai_engines_enabled"] = 1.0 if use_ai_engines else 0.0
-        metrics["celebrity_profile"] = float(
-            sorted(["adele", "james_earl_jones", "michael_jackson", "morgan_freeman", "taylor_swift"]).index(celebrity)
-        )
+        metrics["celebrity_profile"] = float(CELEBRITY_KEYS.index(celebrity))
         metrics["rvc_engine"] = rvc_engine
+        metrics["openvoice_engine"] = openvoice_engine
+        metrics["openvoice_reference_available"] = 1.0 if celebrity_reference_path is not None else 0.0
+        return PipelineResult(output_path=path, metrics=metrics)
+
+    def convert_voice_clone_file(
+        self,
+        input_path: str,
+        reference_paths: list[str],
+        celebrity: str | None = None,
+        output_path: str | None = None,
+        *,
+        use_ai_engines: bool = True,
+        clownfish_preset: str | None = None,
+        clownfish_pitch: float | None = None,
+    ) -> PipelineResult:
+        celebrity_key = celebrity.strip().lower() if isinstance(celebrity, str) and celebrity.strip() else None
+        explicit_reference_path = reference_paths[0] if reference_paths else None
+        celebrity_reference_path = get_celebrity_reference_path(celebrity_key) if celebrity_key else None
+        target_reference_path = explicit_reference_path or celebrity_reference_path
+        profile_key = celebrity_key or ("reference" if target_reference_path else "identity")
+        profile_name = self._dsp_profile_name("voice_clone", profile_key)
+
+        source = load_audio_mono(input_path, self.sample_rate)
+        clean = prepare_clean_speech(source, self.sample_rate)
+        prepared = preprocess_spectrogram_for_model(clean.audio, self.sample_rate)
+        start = perf_counter()
+        effective_clownfish_preset = clownfish_preset or ("clone" if target_reference_path is not None else None)
+        system_clownfish_metrics = self._apply_system_clownfish_style(
+            effective_clownfish_preset,
+            clownfish_pitch=clownfish_pitch,
+        )
+
+        temp_dir: Path | None = None
+        try:
+            rvc_result = None
+            if use_ai_engines and celebrity_key is not None and explicit_reference_path is None:
+                rvc_input_path = input_path
+                if (
+                    get_rvc_config("celebrity", celebrity_key, models_dir=self.rvc_models_dir) is not None
+                    and prepared.metrics.get("opencv_spectrogram_applied", 0.0) > 0.0
+                ):
+                    rvc_input_path, temp_dir = self._write_ai_preprocessed_input(prepared, self.sample_rate, "voice_clone")
+                rvc_result = convert_file_with_rvc(
+                    rvc_input_path,
+                    "celebrity",
+                    celebrity_key,
+                    self.sample_rate,
+                    models_dir=self.rvc_models_dir,
+                    device=self.rvc_device,
+                )
+
+            openvoice_result = None
+            if use_ai_engines and rvc_result is None and target_reference_path is not None:
+                openvoice_result = clone_voice_with_openvoice(
+                    input_path,
+                    target_reference_path,
+                    self.sample_rate,
+                    device=self.openvoice_device,
+                    openvoice_root=self.openvoice_root,
+                    checkpoints_dir=self.openvoice_checkpoints_dir,
+                )
+
+            freevc_result = None
+            if (
+                use_ai_engines
+                and rvc_result is None
+                and openvoice_result is None
+                and explicit_reference_path is not None
+            ):
+                freevc_result = convert_file_with_freevc(
+                    input_path,
+                    explicit_reference_path,
+                    self.sample_rate,
+                    assets_dir=self.freevc_assets_dir,
+                    device=self.freevc_device,
+                )
+
+            if rvc_result is not None:
+                converted = rvc_result.audio
+                rvc_engine = 1.0
+                openvoice_engine = 0.0
+                freevc_engine = 0.0
+            elif openvoice_result is not None:
+                converted = openvoice_result
+                rvc_engine = 0.0
+                openvoice_engine = 1.0
+                freevc_engine = 0.0
+            elif freevc_result is not None:
+                converted = freevc_result.audio
+                rvc_engine = 0.0
+                openvoice_engine = 0.0
+                freevc_engine = 1.0
+            elif celebrity_key is not None:
+                converted = convert_celebrity(prepared.audio, self.sample_rate, celebrity_key)
+                settings = get_dsp_profile_settings(profile_name, profiles_dir=self.dsp_profiles_dir)
+                converted = merge_preserving_noise_regions(
+                    prepared.audio,
+                    converted,
+                    self.sample_rate,
+                    intensity=settings.transform_intensity,
+                    smoothing=settings.formant_smoothing,
+                )
+                rvc_engine = 0.0
+                openvoice_engine = 0.0
+                freevc_engine = 0.0
+            else:
+                references = [
+                    prepare_clean_speech(load_audio_mono(path, self.sample_rate), self.sample_rate).audio
+                    for path in reference_paths
+                ]
+                converted = clone_speaker(clean.audio, self.sample_rate, references)
+                settings = get_dsp_profile_settings(profile_name, profiles_dir=self.dsp_profiles_dir)
+                converted = merge_preserving_noise_regions(
+                    clean.audio,
+                    converted,
+                    self.sample_rate,
+                    intensity=settings.transform_intensity,
+                    smoothing=settings.formant_smoothing,
+                )
+                rvc_engine = 0.0
+                openvoice_engine = 0.0
+                freevc_engine = 0.0
+
+            engine = (
+                "rvc"
+                if rvc_engine >= 1.0
+                else "openvoice"
+                if openvoice_engine >= 1.0
+                else "freevc"
+                if freevc_engine >= 1.0
+                else "dsp"
+            )
+            converted, clownfish_metrics = self._apply_clownfish_style(
+                converted,
+                clownfish_preset=effective_clownfish_preset,
+                clownfish_pitch=clownfish_pitch,
+            )
+            converted, dsp_metrics = self._post_filter_with_autotune(converted, profile_name, engine=engine)
+            elapsed = perf_counter() - start
+        finally:
+            if temp_dir is not None:
+                self._cleanup_temp_dir(temp_dir)
+
+        path = save_audio(output_path or default_output_path(input_path, "voice_clone"), converted, self.sample_rate)
+        metrics = self._build_metrics(source, converted, elapsed)
+        metrics.update(clean.metrics)
+        metrics.update(system_clownfish_metrics)
+        metrics.update(clownfish_metrics)
+        metrics.update(dsp_metrics)
+        metrics.update(prepared.metrics)
+        metrics["reference_count"] = float(len(reference_paths))
+        metrics["ai_engines_enabled"] = 1.0 if use_ai_engines else 0.0
+        metrics["rvc_engine"] = rvc_engine
+        metrics["openvoice_engine"] = openvoice_engine
+        metrics["freevc_engine"] = freevc_engine
+        metrics["openvoice_reference_available"] = 1.0 if target_reference_path is not None else 0.0
+        if celebrity_key in CELEBRITY_KEYS:
+            metrics["celebrity_profile"] = float(CELEBRITY_KEYS.index(celebrity_key))
         return PipelineResult(output_path=path, metrics=metrics)
 
     def process_live_chunk(self, chunk: np.ndarray, task: str, options: dict[str, object]) -> np.ndarray:
         if task == "emotion":
             emotion = str(options.get("emotion", "calm"))
-            return convert_emotion(
-                chunk,
-                self.sample_rate,
-                emotion,
-                pitch_override=self._optional_float(options, "pitch_override"),
-                rate_override=self._optional_float(options, "rate_override"),
-                energy_override=self._optional_float(options, "energy_override"),
-            )
-
-        if task == "gender_age":
+            if self._emotion_clownfish_preset(emotion) is not None:
+                converted = np.asarray(chunk, dtype=np.float32)
+            else:
+                converted = convert_emotion(
+                    chunk,
+                    self.sample_rate,
+                    emotion,
+                    pitch_override=self._optional_float(options, "pitch_override"),
+                    rate_override=self._optional_float(options, "rate_override"),
+                    energy_override=self._optional_float(options, "energy_override"),
+                )
+        elif task == "gender_age":
             mode = str(options.get("mode", "male_to_female"))
-            return convert_gender_age(chunk, self.sample_rate, mode)
-
-        if task == "speaker_clone":
+            converted = convert_gender_age(chunk, self.sample_rate, mode)
+        elif task == "speaker_clone":
             # Live mode uses light identity preservation when no references are available.
-            return clone_speaker(chunk, self.sample_rate, references=[])
-
-        if task == "singing":
-            return convert_to_singing(
+            converted = clone_speaker(chunk, self.sample_rate, references=[])
+        elif task == "singing":
+            converted = convert_to_singing(
                 chunk,
                 self.sample_rate,
                 midi_path=options.get("midi_path") if isinstance(options.get("midi_path"), str) else None,
                 pitch_contour=options.get("pitch_contour") if isinstance(options.get("pitch_contour"), list) else None,
+                preserve_duration=True,
             )
-
-        if task == "celebrity":
+        elif task == "celebrity":
             celebrity = str(options.get("celebrity", "michael_jackson"))
-            return convert_celebrity(chunk, self.sample_rate, celebrity)
+            converted = convert_celebrity(chunk, self.sample_rate, celebrity)
+        elif task == "voice_clone":
+            celebrity = self._optional_string(options, "celebrity")
+            if celebrity is not None:
+                converted = convert_celebrity(chunk, self.sample_rate, celebrity)
+            else:
+                # Live mode keeps the clone path lightweight; file mode uses OpenVoice/FreeVC.
+                converted = clone_speaker(chunk, self.sample_rate, references=[])
+        else:
+            raise ValueError(f"Unsupported live task: {task}")
 
-        raise ValueError(f"Unsupported live task: {task}")
+        styled, _ = self._apply_clownfish_style(
+            converted,
+            clownfish_preset=self._clownfish_preset_for_task(task, options),
+            clownfish_pitch=self._clownfish_pitch_for_task(task, options),
+        )
+        return styled
+
+    def apply_system_clownfish_for_task(self, task: str, options: dict[str, object]) -> dict[str, float]:
+        return self._apply_system_clownfish_style(
+            self._clownfish_preset_for_task(task, options),
+            clownfish_pitch=self._clownfish_pitch_for_task(task, options),
+        )
+
+    def _clownfish_preset_for_task(self, task: str, options: dict[str, object]) -> str | None:
+        explicit = self._optional_string(options, "clownfish_preset")
+        if explicit is not None:
+            return explicit
+
+        if task == "emotion":
+            return self._emotion_clownfish_preset(str(options.get("emotion", "")))
+        if task == "gender_age":
+            return self._default_clownfish_preset(task, str(options.get("mode", "")))
+        if task == "speaker_clone":
+            return self._default_clownfish_preset(task, "reference")
+        if task == "voice_clone":
+            return "clone" if options.get("reference_paths") or options.get("celebrity") else None
+        return None
+
+    def _clownfish_pitch_for_task(self, task: str, options: dict[str, object]) -> float | None:
+        explicit = self._optional_float(options, "clownfish_pitch")
+        if explicit is not None:
+            return explicit
+        if task == "emotion" and self._emotion_clownfish_preset(str(options.get("emotion", ""))) == "custom_pitch":
+            return self._optional_float(options, "pitch_override")
+        return None
+
+    @staticmethod
+    def _emotion_clownfish_preset(emotion: str) -> str | None:
+        key = emotion.strip().lower().replace("-", "_").replace(" ", "_")
+        return key if key in EMOTION_CLOWNFISH_PRESETS else None
+
+    @staticmethod
+    def _default_clownfish_preset(task: str, mode: str) -> str | None:
+        if task == "gender_age":
+            return GENDER_AGE_CLOWNFISH_PRESETS.get(mode)
+        if task == "speaker_clone" and mode == "reference":
+            return "clone"
+        return None
+
+    def _apply_system_clownfish_style(
+        self,
+        clownfish_preset: str | None,
+        *,
+        clownfish_pitch: float | None,
+    ) -> dict[str, float]:
+        preset = get_clownfish_preset(clownfish_preset)
+        if preset.key == "none":
+            return {"clownfish_system_requested": 0.0, "clownfish_system_command_sent": 0.0}
+
+        try:
+            result = clownfish_service.apply_preset(
+                preset.key,
+                custom_pitch=clownfish_pitch,
+                enable=True,
+            )
+        except Exception as exc:  # pragma: no cover - defensive around external Windows API
+            logger.warning("Clownfish system preset failed for %s: %s", preset.key, exc)
+            return {
+                "clownfish_system_requested": 1.0,
+                "clownfish_system_supported": 0.0,
+                "clownfish_system_available": 0.0,
+                "clownfish_system_command_sent": 0.0,
+            }
+
+        return {
+            "clownfish_system_requested": 1.0,
+            "clownfish_system_supported": 1.0 if result.supported else 0.0,
+            "clownfish_system_available": 1.0 if result.available else 0.0,
+            "clownfish_system_command_sent": 1.0 if result.command_sent else 0.0,
+        }
 
     @staticmethod
     def _optional_float(options: dict[str, object], key: str) -> float | None:
@@ -395,6 +810,36 @@ class VoiceConversionPipeline:
         if isinstance(value, (int, float)):
             return float(value)
         return None
+
+    @staticmethod
+    def _optional_string(options: dict[str, object], key: str) -> str | None:
+        value = options.get(key)
+        if isinstance(value, str) and value.strip():
+            return value
+        return None
+
+    def _apply_clownfish_style(
+        self,
+        audio: np.ndarray,
+        *,
+        clownfish_preset: str | None,
+        clownfish_pitch: float | None,
+    ) -> tuple[np.ndarray, dict[str, float]]:
+        preset = get_clownfish_preset(clownfish_preset)
+        if preset.key == "none":
+            return np.asarray(audio, dtype=np.float32), {"clownfish_style_applied": 0.0}
+
+        styled = apply_clownfish_preset(
+            audio,
+            self.sample_rate,
+            preset.key,
+            custom_pitch=clownfish_pitch,
+        )
+        return styled, {
+            "clownfish_style_applied": 1.0,
+            "clownfish_effect_id": float(preset.effect_id),
+            "clownfish_pitch_semitones": float(effective_pitch_semitones(preset.key, clownfish_pitch)),
+        }
 
     @staticmethod
     def _dsp_profile_name(category: str, key: str) -> str:
@@ -440,7 +885,7 @@ class VoiceConversionPipeline:
     ) -> tuple[np.ndarray, dict[str, float]]:
         settings = get_dsp_profile_settings(profile_name, profiles_dir=self.dsp_profiles_dir)
         pre_metrics = measure_audio_health(audio, self.sample_rate, prefix="pre_post_")
-        neural_safe_filter = engine in {"freevc", "rvc"}
+        neural_safe_filter = engine in {"freevc", "rvc", "openvoice"}
         quality_result = optimize_post_filter_quality(
             audio,
             self.sample_rate,
@@ -511,6 +956,32 @@ class VoiceConversionPipeline:
         path = run_dir / "ai_input.wav"
         save_audio(str(path), prepared.audio, sample_rate)
         return str(path), run_dir
+
+    def _write_openvoice_preprocessed_pair(
+        self,
+        clean_source: np.ndarray,
+        reference_path: str,
+        prefix: str,
+    ) -> tuple[str, str, Path, dict[str, float]]:
+        temp_root = self._resolve_ai_preprocess_temp_root()
+        run_dir = temp_root / f"omnispeech-openvoice-{prefix}-{uuid4().hex}"
+        run_dir.mkdir(parents=True, exist_ok=False)
+
+        source_path = run_dir / "openvoice_source.wav"
+        reference_output_path = run_dir / "openvoice_reference.wav"
+        save_audio(str(source_path), clean_source, self.sample_rate)
+
+        reference_audio = load_audio_mono(reference_path, self.sample_rate, normalize_mode="rms", target_rms=0.075)
+        clean_reference = prepare_clean_speech(reference_audio, self.sample_rate)
+        save_audio(str(reference_output_path), clean_reference.audio, self.sample_rate)
+
+        metrics = {
+            "openvoice_preprocess_applied": 1.0,
+            "openvoice_reference_clean_peak": float(clean_reference.metrics.get("pure_dsp_clean_peak", 0.0)),
+            "openvoice_reference_clean_rms": float(clean_reference.metrics.get("pure_dsp_clean_rms", 0.0)),
+            "openvoice_reference_voiced_ratio": float(clean_reference.metrics.get("pure_dsp_voiced_ratio", 0.0)),
+        }
+        return str(source_path), str(reference_output_path), run_dir, metrics
 
     @staticmethod
     def _cleanup_temp_dir(run_dir: Path) -> None:

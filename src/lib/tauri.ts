@@ -23,11 +23,28 @@ export const api = {
     energyOverride: number | null = null,
     outputPath: string | null = null,
     useAiEngines = true,
-  ) => tauriOnly<ConversionResult>("convert_emotion", { inputPath, emotion, pitchOverride, rateOverride, energyOverride, outputPath, useAiEngines }),
-  convertGenderAge: (inputPath: string, mode: string, outputPath: string | null = null, useAiEngines = true) =>
-    tauriOnly<ConversionResult>("convert_gender_age", { inputPath, mode, outputPath, useAiEngines }),
-  convertSpeakerClone: (inputPath: string, referencePaths: string[], outputPath: string | null = null, useAiEngines = true) =>
-    tauriOnly<ConversionResult>("convert_speaker_clone", { inputPath, referencePaths, outputPath, useAiEngines }),
+  ) =>
+    tauriOnly<ConversionResult>("convert_emotion", {
+      inputPath,
+      emotion,
+      pitchOverride,
+      rateOverride,
+      energyOverride,
+      outputPath,
+      useAiEngines,
+    }),
+  convertGenderAge: (
+    inputPath: string,
+    mode: string,
+    outputPath: string | null = null,
+    useAiEngines = true,
+  ) => tauriOnly<ConversionResult>("convert_gender_age", { inputPath, mode, outputPath, useAiEngines }),
+  convertSpeakerClone: (
+    inputPath: string,
+    referencePaths: string[],
+    outputPath: string | null = null,
+    useAiEngines = true,
+  ) => tauriOnly<ConversionResult>("convert_speaker_clone", { inputPath, referencePaths, outputPath, useAiEngines }),
   convertSinging: (
     inputPath: string,
     midiPath: string | null,
@@ -35,8 +52,19 @@ export const api = {
     outputPath: string | null = null,
     useAiEngines = true,
   ) => tauriOnly<ConversionResult>("convert_singing", { inputPath, midiPath, pitchContour, outputPath, useAiEngines }),
-  convertCelebrity: (inputPath: string, celebrity: string, outputPath: string | null = null, useAiEngines = true) =>
-    tauriOnly<ConversionResult>("convert_celebrity", { inputPath, celebrity, outputPath, useAiEngines }),
+  convertCelebrity: (
+    inputPath: string,
+    celebrity: string,
+    outputPath: string | null = null,
+    useAiEngines = true,
+  ) => tauriOnly<ConversionResult>("convert_celebrity", { inputPath, celebrity, outputPath, useAiEngines }),
+  convertVoiceClone: (
+    inputPath: string,
+    referencePaths: string[],
+    celebrity: string | null = null,
+    outputPath: string | null = null,
+    useAiEngines = true,
+  ) => tauriOnly<ConversionResult>("convert_voice_clone", { inputPath, referencePaths, celebrity, outputPath, useAiEngines }),
   sendDspFeedback: (profileName: string, feedback: string) =>
     tauriOnly<{ profile_name: string; feedback: string; settings: Record<string, unknown> }>("send_dsp_feedback", { profileName, feedback }),
   listVirtualMics: () => tauriOnly<string[]>("list_virtual_mic_devices"),

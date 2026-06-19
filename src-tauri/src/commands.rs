@@ -241,6 +241,25 @@ pub async fn convert_celebrity(
 }
 
 #[tauri::command]
+pub async fn convert_voice_clone(
+    input_path: String,
+    reference_paths: Vec<String>,
+    celebrity: Option<String>,
+    use_ai_engines: Option<bool>,
+    output_path: Option<String>,
+) -> Result<ConversionResponse, String> {
+    let payload = json!({
+        "input_path": input_path,
+        "reference_paths": reference_paths,
+        "celebrity": celebrity,
+        "use_ai_engines": use_ai_engines.unwrap_or(true),
+        "output_path": output_path,
+    });
+    let response = backend::post("/api/convert/voice-clone", payload).await?;
+    serde_json::from_value(response).map_err(|err| format!("Invalid conversion response: {err}"))
+}
+
+#[tauri::command]
 pub async fn send_dsp_feedback(profile_name: String, feedback: String) -> Result<Value, String> {
     let payload = json!({
         "profile_name": profile_name,

@@ -19,6 +19,7 @@ from backend.api.schemas import (
     SingingRequest,
     SpeakerCloneRequest,
     VirtualMicDevicesResponse,
+    VoiceCloneRequest,
 )
 from backend.audio.dsp_profiles import apply_user_feedback
 from backend.pipeline.processor import VoiceConversionPipeline
@@ -93,6 +94,20 @@ def build_router(pipeline: VoiceConversionPipeline, live_manager: LiveSessionMan
         try:
             result = pipeline.convert_celebrity_file(
                 input_path=payload.input_path,
+                celebrity=payload.celebrity,
+                use_ai_engines=payload.use_ai_engines,
+                output_path=payload.output_path,
+            )
+            return ConversionResponse(output_path=result.output_path, metrics=result.metrics)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @router.post("/api/convert/voice-clone", response_model=ConversionResponse)
+    async def convert_voice_clone(payload: VoiceCloneRequest) -> ConversionResponse:
+        try:
+            result = pipeline.convert_voice_clone_file(
+                input_path=payload.input_path,
+                reference_paths=payload.reference_paths,
                 celebrity=payload.celebrity,
                 use_ai_engines=payload.use_ai_engines,
                 output_path=payload.output_path,

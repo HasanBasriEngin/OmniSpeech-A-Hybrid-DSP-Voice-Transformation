@@ -114,9 +114,36 @@ Secilen varsayilanlar:
 - FreeVC content encoder icin `microsoft/wavlm-large`: Space'in kullandigi
   WavLM Large encoder.
 
-FreeVC varliklari mevcutsa `speaker_clone` dosya donusumu, ilk referans sesini
-hedef stil olarak kullanip FreeVC'yi dener; model eksikse mevcut hafif DSP/ML
-fallback aynen calisir.
+OpenVoice veya FreeVC varliklari mevcutsa `speaker_clone` dosya donusumu, ilk
+referans sesini hedef stil olarak kullanir. Siralama OpenVoice, FreeVC ve DSP
+fallback seklindedir; model veya checkpoint eksikse mevcut hafif DSP/ML fallback
+aynen calisir.
+
+### OpenVoice entegrasyonu
+
+OpenVoice opsiyoneldir ve uygulama OpenVoice kurulu degilken de calisir. Yerel
+kurulum icin OpenVoice reposunu proje icine klonlayip checkpointleri ayni
+dizindeki `checkpoints` klasorune yerlestirin:
+
+```bash
+git clone https://github.com/myshell-ai/OpenVoice.git vendor/OpenVoice
+pip install -r vendor/OpenVoice/requirements.txt
+```
+
+Ardindan OpenVoice checkpoint zip dosyasini indirip acin ve converter
+checkpointlerinin `vendor/OpenVoice/checkpoints/converter/config.json` ve
+`vendor/OpenVoice/checkpoints/converter/checkpoint.pth` olarak gorundugunu
+dogrulayin. Farkli konum kullaniyorsaniz:
+
+```cmd
+set OMNISPEECH_OPENVOICE_ROOT=vendor/OpenVoice
+set OMNISPEECH_OPENVOICE_CHECKPOINTS_DIR=vendor/OpenVoice/checkpoints
+```
+
+OpenVoice hazir oldugunda `speaker_clone`, `/api/convert/voice-clone` ve yerel
+referans WAV bulunan `celebrity` donusumleri tone-color converter'i kullanir.
+Uygulama metriklerinde `openvoice_engine=1` gorunur. Checkpointleri otomatik
+indirmek isterseniz `OMNISPEECH_OPENVOICE_AUTO_DOWNLOAD=1` verilebilir.
 
 RVC modelleri git'e eklenmez. Lisansli veya riza alinmis yerel modelleri `models/rvc/<model_id>/<model_id>.pth` duzeninde yerlestirin ve `models/rvc/registry.json` ile mode eslestirmesi yapin. Ornek sema `models/rvc/registry.example.json` icindedir.
 Hugging Face uzerindeki hazir RVC hedef ses modelleri kalite ve izin acisindan
@@ -134,7 +161,8 @@ Bu mimari uygulanabilir ve repo su an RVC-oncelikli sekilde hazirdir:
 4. `models/rvc/registry.json` icinde uygun model varsa RVC inference calisir; yoksa ayni hazirlanmis ses hafif DSP fallback ile islenir.
 5. Cikis post-filter, de-click, de-ess ve limiter zincirinden gecirilip WAV olarak kaydedilir.
 
-FreeVC 24 kHz entegrasyonu speaker-clone akisi icin opsiyonel olarak eklidir.
+OpenVoice tone-color converter ve FreeVC 24 kHz entegrasyonu speaker-clone akisi
+icin opsiyonel olarak eklidir.
 RVC ise hedef sese ozel yerel `.pth/.index` model registry'si ile calisir.
 
 ## Gelistirme Ortam Degiskenleri
@@ -154,6 +182,11 @@ RVC ise hedef sese ozel yerel `.pth/.index` model registry'si ile calisir.
 | `OMNISPEECH_FREEVC_DEVICE=cpu` | FreeVC inference cihaz secimi |
 | `OMNISPEECH_WAVLM_MODEL=models/hf/wavlm-large` | FreeVC WavLM encoder yolu veya HF model id |
 | `OMNISPEECH_FREEVC_TEMP_DIR=.tmp/freevc` | FreeVC gecici WAV calisma dizini |
+| `OMNISPEECH_OPENVOICE_ROOT=vendor/OpenVoice` | Yerel OpenVoice repo checkout dizini |
+| `OMNISPEECH_OPENVOICE_CHECKPOINTS_DIR=vendor/OpenVoice/checkpoints` | OpenVoice converter checkpoint dizini |
+| `OMNISPEECH_OPENVOICE_DEVICE=cpu` | OpenVoice inference cihaz secimi |
+| `OMNISPEECH_OPENVOICE_TEMP_DIR=.tmp/openvoice` | OpenVoice gecici WAV calisma dizini |
+| `OMNISPEECH_OPENVOICE_AUTO_DOWNLOAD=1` | Converter checkpointleri yoksa otomatik indirmeyi acar |
 | `OMNISPEECH_AI_PREPROCESS_TEMP_DIR=.tmp/ai_preprocess` | RVC oncesi OpenCV spektrogram on-isleme gecici dizini |
 
 ## Ozellikler

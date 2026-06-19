@@ -3,14 +3,15 @@ import { useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 
 import { api } from "@/lib/tauri";
 
-type ModuleKey = "emotion" | "gender" | "speaker" | "singing" | "celebrity";
-type EmotionKey = "sad" | "angry" | "excited" | "whisper" | "calm";
+type ModuleKey = "emotion" | "gender" | "speaker" | "celebrity";
+type BaseEmotionKey = "sad" | "angry" | "excited" | "whisper" | "calm";
+type VoiceEffectKey = "helium_pitch" | "radio" | "robot" | "clone" | "custom_pitch";
+type EmotionKey = BaseEmotionKey | VoiceEffectKey;
 type CelebrityKey = "michael_jackson" | "morgan_freeman" | "adele" | "james_earl_jones" | "taylor_swift";
 type GenderMode = "male_to_female" | "female_to_male" | "adult_to_child" | "adult_to_elderly" | "child_to_adult";
 type NavigationKey = "workspace" | "evaluation" | "settings";
 type InputMode = "file" | "mic";
 type FeatureTab = "f0" | "mfcc" | "energy";
-type QualityFeedbackKey = "clean" | "muffled" | "harsh" | "robotic" | "too_thin" | "too_thick" | "noisy" | "unnatural";
 
 type LogEntry = {
   time: string;
@@ -31,13 +32,35 @@ type WaveformData = {
 
 const TOTAL_DURATION = 2.8;
 const LIVE_SAMPLE_RATE = 22050;
+const DEFAULT_PARAMETERS = {
+  pitch: 1.5,
+  rate: 1.15,
+  energy: 1.4,
+};
 
 const moduleMeta: Record<ModuleKey, { label: string; labelTr: string }> = {
   emotion:   { label: "Emotion",          labelTr: "Duygu Dönüşümü" },
   gender:    { label: "Gender / Age",     labelTr: "Cinsiyet / Yaş" },
   speaker:   { label: "Speaker / Clone",  labelTr: "Konuşmacı Klonu" },
-  singing:   { label: "Singing Voice",    labelTr: "Şarkı Sesi" },
   celebrity: { label: "Celebrity Voice",  labelTr: "Ünlü Sesi" },
+};
+
+const visibleModuleKeys: ModuleKey[] = ["emotion", "gender", "speaker"];
+
+const baseEmotionKeys: BaseEmotionKey[] = ["sad", "angry", "excited", "whisper", "calm"];
+const voiceEffectKeys: VoiceEffectKey[] = ["helium_pitch", "radio", "robot", "clone", "custom_pitch"];
+
+const emotionLabels: Record<EmotionKey, string> = {
+  sad: "sad",
+  angry: "angry",
+  excited: "excited",
+  whisper: "whisper",
+  calm: "calm",
+  helium_pitch: "Helium",
+  radio: "Radio",
+  robot: "Robot",
+  clone: "Clone",
+  custom_pitch: "Custom pitch",
 };
 
 const emotionDescriptions: Record<EmotionKey, string> = {
@@ -46,6 +69,11 @@ const emotionDescriptions: Record<EmotionKey, string> = {
   excited: "Yüksek perde ve hızlı konuşma",
   whisper: "Nefesli ton ve düşük enerji",
   calm:    "Dengeli ton ve akıcı ritim",
+  helium_pitch: "İnce, parlak ve yüksek perde karakteri",
+  radio: "Dar bantlı radyo/telsiz karakteri",
+  robot: "Mekanik ve genlik modlu robot karakteri",
+  clone: "Hafif detune katmanlarıyla klon karakteri",
+  custom_pitch: "Perde kayması değerini efekt olarak kullanır",
 };
 
 const celebrityLabels: Record<CelebrityKey, string> = {
@@ -57,30 +85,19 @@ const celebrityLabels: Record<CelebrityKey, string> = {
 };
 
 const genderModeLabels: Record<GenderMode, string> = {
-  male_to_female:   "Erkek → Kadın",
-  female_to_male:   "Kadın → Erkek",
-  adult_to_child:   "Yetişkin → Çocuk",
+  male_to_female:   "Female pitch",
+  female_to_male:   "Male pitch",
+  adult_to_child:   "Baby",
   adult_to_elderly: "Yetişkin → Yaşlı",
   child_to_adult:   "Çocuk → Yetişkin",
 };
 
 const genderModeDescriptions: Record<GenderMode, string> = {
-  male_to_female:   "Daha yüksek perde ve parlak vokal yolu",
-  female_to_male:   "Daha düşük perde ve derin vokal yolu",
-  adult_to_child:   "Yüksek perde ve küçük vokal şekli",
+  male_to_female:   "Kadın karakterine yakın parlak perde/formant dönüşümü",
+  female_to_male:   "Erkek karakterine yakın kalın perde/formant dönüşümü",
+  adult_to_child:   "Yaş modunda küçük vokal yolu ve çocuk/baby karakteri",
   adult_to_elderly: "Yaşlı timbr ile yumuşak perde kayması",
   child_to_adult:   "Düşük perde ve dolgun yetişkin tonu",
-};
-
-const qualityFeedbackLabels: Record<QualityFeedbackKey, string> = {
-  clean: "Temiz",
-  muffled: "Boguk",
-  harsh: "Cizirtili",
-  robotic: "Robotik",
-  too_thin: "Cok ince",
-  too_thick: "Cok kalin",
-  noisy: "Parazitli",
-  unnatural: "Dogal degil",
 };
 
 function nowClock() {
@@ -408,9 +425,9 @@ export default function App() {
   const [processedWaveform, setProcessedWaveform] = useState<WaveformData | null>(null);
   const [metrics, setMetrics] = useState<Record<string, number>>({});
 
-  const [pitchValue, setPitchValue] = useState(1.5);
-  const [rateValue, setRateValue] = useState(1.15);
-  const [energyValue, setEnergyValue] = useState(1.4);
+  const [pitchValue, setPitchValue] = useState(DEFAULT_PARAMETERS.pitch);
+  const [rateValue, setRateValue] = useState(DEFAULT_PARAMETERS.rate);
+  const [energyValue, setEnergyValue] = useState(DEFAULT_PARAMETERS.energy);
 
   const [playing, setPlaying] = useState(false);
   const [progress, setProgress] = useState(0.34);
@@ -420,8 +437,6 @@ export default function App() {
   const [isConverting, setIsConverting] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [useAiEngines, setUseAiEngines] = useState(false);
-  const [feedbackPending, setFeedbackPending] = useState<QualityFeedbackKey | null>(null);
-  const [lastFeedback, setLastFeedback] = useState<QualityFeedbackKey | null>(null);
   const [isLive, setIsLive] = useState(false);
   const [liveSessionId, setLiveSessionId] = useState<string | null>(null);
   const [isRecording, setIsRecording] = useState(false);
@@ -441,6 +456,7 @@ export default function App() {
   const pitchRef = useRef<HTMLCanvasElement | null>(null);
   const outputAudioRef = useRef<HTMLAudioElement | null>(null);
   const rafRef = useRef<number | null>(null);
+  const originalSourceRef = useRef<string | null>(null);
   const liveSessionRef = useRef<string | null>(null);
   const liveStreamRef = useRef<MediaStream | null>(null);
   const liveAudioContextRef = useRef<AudioContext | null>(null);
@@ -460,35 +476,34 @@ export default function App() {
     setLogEntries((prev) => [...prev, { time: nowClock(), text, pending }].slice(-100));
   };
 
-  const engineModeLabel = useAiEngines ? "RVC/FreeVC" : "Pure DSP";
+  const resetParameters = () => {
+    setPitchValue(DEFAULT_PARAMETERS.pitch);
+    setRateValue(DEFAULT_PARAMETERS.rate);
+    setEnergyValue(DEFAULT_PARAMETERS.energy);
+  };
+
+  const setOriginalSourceFile = (path: string | null) => {
+    originalSourceRef.current = path;
+    setSourceFile(path);
+  };
+
+  const engineModeLabel = useAiEngines ? "OpenVoice/RVC/FreeVC" : "Pure DSP";
   const toggleEngineMode = () => {
     const next = !useAiEngines;
     setUseAiEngines(next);
-    addLog(`Motor modu: ${next ? "RVC/FreeVC" : "Pure DSP"}`);
+    addLog(`Motor modu: ${next ? "OpenVoice/RVC/FreeVC" : "Pure DSP"}`);
   };
 
-  const moduleButtons = useMemo(() => (Object.keys(moduleMeta) as ModuleKey[]).map((key) => ({ key, ...moduleMeta[key] })), []);
+  const moduleButtons = useMemo(() => visibleModuleKeys.map((key) => ({ key, ...moduleMeta[key] })), []);
   const activeTask = useMemo(
     () =>
       activeModule === "emotion"
         ? "emotion"
         : activeModule === "speaker"
           ? "speaker_clone"
-          : activeModule === "singing"
-            ? "singing"
-            : activeModule === "celebrity"
-              ? "celebrity"
-              : "gender_age",
+          : "gender_age",
     [activeModule],
   );
-  const dspProfileName = useMemo(() => {
-    if (activeTask === "emotion") return `emotion.${selectedEmotion}`;
-    if (activeTask === "gender_age") return `gender_age.${selectedGenderMode}`;
-    if (activeTask === "celebrity") return `licensed_profile.${selectedCelebrity}`;
-    if (activeTask === "speaker_clone") return `speaker_clone.${referenceFiles.length ? "reference" : "identity"}`;
-    return `singing.${midiFile ? "midi" : "manual"}`;
-  }, [activeTask, midiFile, referenceFiles.length, selectedCelebrity, selectedEmotion, selectedGenderMode]);
-
   const metricValues = useMemo(() => {
     const processingSeconds = metrics.processing_seconds ?? 1.4;
     const latencyMs = Math.max(1, Math.round(processingSeconds * 1000));
@@ -557,8 +572,9 @@ export default function App() {
       const selected = await api.pickAudioFile();
       if (selected) {
         stopPlayback();
+        resetParameters();
         setOutputPath(null);
-        setSourceFile(selected);
+        setOriginalSourceFile(selected);
         setInputMode("file");
         addLog(`Kaynak seçildi: ${basename(selected)}`);
       }
@@ -572,6 +588,7 @@ export default function App() {
   const pickReferences = async () => {
     try {
       const selected = await api.pickReferenceFiles();
+      resetParameters();
       setReferenceFiles(selected);
       addLog(selected.length ? `Referans seçildi (${selected.length})` : "Referanslar temizlendi");
       return selected;
@@ -629,8 +646,9 @@ export default function App() {
       const wavBytes = encodeWav(mergeAudioChunks(chunks), recordingSampleRateRef.current);
       const path = await api.saveRecordingWav(Array.from(wavBytes));
       stopPlayback();
+      resetParameters();
       setOutputPath(null);
-      setSourceFile(path);
+      setOriginalSourceFile(path);
       setRecordedFile(path);
       setInputMode("mic");
       setRecordingSeconds(Number(((Date.now() - recordingStartedAtRef.current) / 1000).toFixed(1)));
@@ -795,10 +813,9 @@ export default function App() {
         activeTask,
         {
           emotion: selectedEmotion,
-          celebrity: selectedCelebrity,
           mode: selectedGenderMode,
           midi_path: midiFile,
-          pitch_contour: activeModule === "singing" && !midiFile ? [manualPitchHz(pitchValue)] : null,
+          pitch_contour: null,
           reference_paths: referenceFiles,
           pitch_override: pitchValue,
           rate_override: rateValue,
@@ -891,12 +908,28 @@ export default function App() {
     }
   };
 
+  const describeActualEngine = (nextMetrics: Record<string, number> | undefined) => {
+    if (!nextMetrics) {
+      return null;
+    }
+    if ((nextMetrics.openvoice_engine ?? 0) >= 1) {
+      return "OpenVoice";
+    }
+    if ((nextMetrics.rvc_engine ?? 0) >= 1) {
+      return "RVC";
+    }
+    if ((nextMetrics.freevc_engine ?? 0) >= 1) {
+      return "FreeVC";
+    }
+    return "Pure DSP";
+  };
+
   const runConvert = async () => {
     if (isConverting) {
       return;
     }
 
-    let inputPath = sourceFile;
+    let inputPath = originalSourceRef.current ?? sourceFile;
     if (!inputPath) {
       inputPath = await pickSource();
     }
@@ -915,25 +948,33 @@ export default function App() {
 
     try {
       let result: ConversionPayload;
+      let refs = referenceFiles;
 
-      if (activeTask === "emotion") {
-        result = await api.convertEmotion(inputPath, selectedEmotion, pitchValue, rateValue, energyValue, null, useAiEngines);
-      } else if (activeTask === "gender_age") {
-        result = await api.convertGenderAge(inputPath, selectedGenderMode, null, useAiEngines);
-      } else if (activeTask === "celebrity") {
-        result = await api.convertCelebrity(inputPath, selectedCelebrity, null, useAiEngines);
-      } else if (activeTask === "speaker_clone") {
-        let refs = referenceFiles;
+      if (activeTask === "speaker_clone") {
         if (refs.length === 0) {
           refs = await pickReferences();
         }
         if (refs.length === 0) {
           throw new Error("Konuşmacı klonu için referans dosya gerekli");
         }
+      }
+
+      if (activeTask === "emotion") {
+        result = await api.convertEmotion(
+          inputPath,
+          selectedEmotion,
+          pitchValue,
+          rateValue,
+          energyValue,
+          null,
+          useAiEngines,
+        );
+      } else if (activeTask === "gender_age") {
+        result = await api.convertGenderAge(inputPath, selectedGenderMode, null, useAiEngines);
+      } else if (activeTask === "speaker_clone") {
         result = await api.convertSpeakerClone(inputPath, refs, null, useAiEngines);
       } else {
-        const pitchContour = midiFile ? null : [manualPitchHz(pitchValue)];
-        result = await api.convertSinging(inputPath, midiFile, pitchContour, null, useAiEngines);
+        throw new Error("Desteklenmeyen dönüşüm modu");
       }
 
       const nextOutputPath = getOutputPath(result);
@@ -944,6 +985,10 @@ export default function App() {
       setOutputPath(nextOutputPath);
       loadPlaybackAudio(nextOutputPath);
       setMetrics(result.metrics ?? {});
+      const actualEngine = describeActualEngine(result.metrics);
+      if (actualEngine) {
+        addLog(`Gercek motor: ${actualEngine}`);
+      }
       if (typeof result.metrics?.output_duration_seconds === "number" && result.metrics.output_duration_seconds > 0) {
         setPlaybackDuration(result.metrics.output_duration_seconds);
       }
@@ -953,29 +998,6 @@ export default function App() {
       addLog(`Dönüşüm başarısız: ${normalizeError(err)}`, true);
     } finally {
       setIsConverting(false);
-    }
-  };
-
-  const sendQualityFeedback = async (feedback: QualityFeedbackKey) => {
-    if (!outputPath) {
-      addLog("Kalite geri bildirimi icin once cikti olustur", true);
-      return;
-    }
-
-    const ready = await ensureBackend();
-    if (!ready) {
-      return;
-    }
-
-    setFeedbackPending(feedback);
-    try {
-      await api.sendDspFeedback(dspProfileName, feedback);
-      setLastFeedback(feedback);
-      addLog(`Kalite geri bildirimi kaydedildi: ${qualityFeedbackLabels[feedback]}`);
-    } catch (err) {
-      addLog(`Kalite geri bildirimi kaydedilemedi: ${normalizeError(err)}`, true);
-    } finally {
-      setFeedbackPending(null);
     }
   };
 
@@ -1090,17 +1112,10 @@ export default function App() {
       ? emotionDescriptions[selectedEmotion]
       : activeModule === "gender"
         ? genderModeDescriptions[selectedGenderMode]
-        : activeModule === "singing"
-          ? midiFile
-            ? `MIDI: ${basename(midiFile)}`
-            : `Manuel hedef: ${Math.round(manualPitchHz(pitchValue))} Hz`
-          : activeModule === "celebrity"
-            ? `Profil: ${celebrityLabels[selectedCelebrity]}`
-            : referenceFiles.length
-              ? `${referenceFiles.length} referans dosyası`
-              : "Referans dosyası gerekli";
+        : referenceFiles.length
+          ? `${referenceFiles.length} referans dosyası`
+          : "Referans dosyası gerekli";
   const speakerReferencesRequired = activeModule === "speaker";
-  const singingMidiSuggested = activeModule === "singing";
   const convertBlockedReason = speakerReferencesRequired && referenceFiles.length === 0 ? "Konuşmacı Klonu için en az bir referans dosyası seç." : null;
   const convertButtonLabel = isConverting ? "İşleniyor..." : convertBlockedReason ? "Referans Gerekli" : "Sesi Dönüştür";
 
@@ -1123,7 +1138,7 @@ export default function App() {
             aria-pressed={useAiEngines}
             className={`engine-switch ${useAiEngines ? "ai" : ""}`}
             onClick={toggleEngineMode}
-            title="RVC/FreeVC motorlarini ac/kapat"
+            title="OpenVoice/RVC/FreeVC motorlarini ac/kapat"
             type="button"
           >
             <span className="engine-switch-track">
@@ -1150,6 +1165,9 @@ export default function App() {
             key={item.key}
             onClick={() => {
               if (isLive) void stopLive(false);
+              if (activeModule !== item.key) {
+                resetParameters();
+              }
               setActiveNav("workspace");
               setActiveModule(item.key);
               addLog(`Modül seçildi: ${item.labelTr}`);
@@ -1160,8 +1178,6 @@ export default function App() {
               {item.key === "emotion"   && <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M8.5 14s1 2 3.5 2 3.5-2 3.5-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>}
               {item.key === "gender"    && <svg viewBox="0 0 24 24"><circle cx="10" cy="8" r="4"/><path d="M2 20c0-4 3.6-7 8-7"/><path d="M16 8h6m-3-3 3 3-3 3"/></svg>}
               {item.key === "speaker"   && <svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>}
-              {item.key === "singing"   && <svg viewBox="0 0 24 24"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>}
-              {item.key === "celebrity" && <svg viewBox="0 0 24 24"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>}
             </span>
             {item.labelTr}
           </button>
@@ -1192,6 +1208,9 @@ export default function App() {
                   <button
                     className={`btn-xs ${inputMode === "file" ? "active" : ""}`}
                     onClick={() => {
+                      if (inputMode !== "file") {
+                        resetParameters();
+                      }
                       setInputMode("file");
                       if (isLive) void stopLive();
                       if (isRecording) void stopRecording(false);
@@ -1200,7 +1219,16 @@ export default function App() {
                   >
                     DOSYA
                   </button>
-                  <button className={`btn-xs ${inputMode === "mic" ? "active" : ""}`} onClick={() => setInputMode("mic")} type="button">
+                  <button
+                    className={`btn-xs ${inputMode === "mic" ? "active" : ""}`}
+                    onClick={() => {
+                      if (inputMode !== "mic") {
+                        resetParameters();
+                      }
+                      setInputMode("mic");
+                    }}
+                    type="button"
+                  >
                     MİK
                   </button>
                   <button className={`btn-xs ${outputPath ? "export-active" : ""}`} disabled={!outputPath || isExporting} onClick={() => void exportOutput()} type="button">
@@ -1252,18 +1280,11 @@ export default function App() {
                 ) : null}
               </div>
 
-              {(speakerReferencesRequired || singingMidiSuggested) ? (
+              {speakerReferencesRequired ? (
                 <div className="action-row contextual">
-                  {speakerReferencesRequired ? (
-                    <button className="btn-xs active" onClick={() => void pickReferences()} type="button">
-                      {referenceFiles.length ? "Referansları Değiştir" : "Referans Seç"}
-                    </button>
-                  ) : null}
-                  {singingMidiSuggested ? (
-                    <button className="btn-xs active" onClick={() => void pickMidi()} type="button">
-                      {midiFile ? "MIDI Değiştir" : "MIDI Seç"}
-                    </button>
-                  ) : null}
+                  <button className="btn-xs active" onClick={() => void pickReferences()} type="button">
+                    {referenceFiles.length ? "Referansları Değiştir" : "Referans Seç"}
+                  </button>
                 </div>
               ) : null}
 
@@ -1271,16 +1292,10 @@ export default function App() {
                 {convertBlockedReason
                   ? convertBlockedReason
                   : activeModule === "emotion"
-                    ? `${selectedEmotion} duygu profili seçili ve dönüşüme hazır.`
+                    ? `${emotionLabels[selectedEmotion]} dönüşümü seçili ve hazır.`
                     : activeModule === "gender"
                       ? `${genderModeLabels[selectedGenderMode]} modu seçili ve dönüşüme hazır.`
-                      : activeModule === "celebrity"
-                        ? `${celebrityLabels[selectedCelebrity]} profili secili ve donusume hazir.`
-                        : singingMidiSuggested
-                          ? midiFile
-                            ? "Şarkı modu seçilen MIDI melodisini kullanacak."
-                            : "Şarkı modu pitch slider'ından hedef nota üretecek."
-                          : `${referenceFiles.length} referans dosyası hazır.`}
+                      : `${referenceFiles.length} referans dosyası hazır.`}
               </div>
 
               <div className="selection-strip">
@@ -1292,25 +1307,19 @@ export default function App() {
                   <span className="selection-label">Kaynak</span>
                   <span className="selection-value">{sourceFile ? basename(sourceFile) : "Seçilmedi"}</span>
                 </div>
-                <div className={`selection-chip ${referenceFiles.length > 0 || activeModule === "gender" || activeModule === "emotion" || activeModule === "celebrity" ? "ok" : speakerReferencesRequired ? "warn" : ""}`}>
+                <div className={`selection-chip ${activeModule === "speaker" && referenceFiles.length === 0 ? "warn" : "ok"}`}>
                   <span className="selection-label">
-                    {activeModule === "emotion" ? "Duygu" : activeModule === "gender" ? "Mod" : activeModule === "celebrity" ? "Profil" : "Referanslar"}
+                    {activeModule === "emotion" ? "Dönüşüm" : activeModule === "gender" ? "Mod" : "Referanslar"}
                   </span>
                   <span className="selection-value">
                     {activeModule === "emotion"
-                      ? selectedEmotion
+                      ? emotionLabels[selectedEmotion]
                       : activeModule === "gender"
                         ? genderModeLabels[selectedGenderMode]
-                        : activeModule === "celebrity"
-                          ? celebrityLabels[selectedCelebrity]
-                          : referenceFiles.length > 0
-                            ? `${referenceFiles.length} dosya`
-                            : "Yok"}
+                        : referenceFiles.length > 0
+                          ? `${referenceFiles.length} dosya`
+                          : "Yok"}
                   </span>
-                </div>
-                <div className={`selection-chip ${midiFile ? "ok" : singingMidiSuggested ? "active" : ""}`}>
-                  <span className="selection-label">MIDI</span>
-                  <span className="selection-value">{midiFile ? basename(midiFile) : singingMidiSuggested ? "Önerilen" : "İsteğe bağlı"}</span>
                 </div>
               </div>
 
@@ -1491,20 +1500,9 @@ export default function App() {
             </>
           ) : null}
 
-          {activeModule === "singing" ? (
-            <div className="param-row">
-              <div className="param-header">
-                <span className="param-name">Manuel Hedef</span>
-                <span className="param-val">{Math.round(manualPitchHz(pitchValue))} Hz</span>
-              </div>
-              <input type="range" min={-12} max={12} step={0.1} value={pitchValue} onChange={(e) => setPitchValue(Number(e.target.value))} />
-              <div className="mini-note">{midiFile ? "MIDI seçili, manuel hedef göz ardı edilir." : "MIDI dosyası seçilmediğinde kullanılır."}</div>
-            </div>
-          ) : null}
-
           {activeModule === "speaker" ? (
             <div className={`mini-note ${referenceFiles.length ? "" : "warn"}`}>
-              {referenceFiles.length ? `${referenceFiles.length} referans dosyası seçili.` : "Ses girişi alanından referans dosyaları seç."}
+              {referenceFiles.length ? `${referenceFiles.length} referans dosyası seçili.` : "Ses girişi alanından referans dosyası seç."}
             </div>
           ) : null}
 
@@ -1520,6 +1518,9 @@ export default function App() {
                     className={`chip wide ${selectedCelebrity === celebrity ? "selected" : ""}`}
                     key={celebrity}
                     onClick={() => {
+                      if (selectedCelebrity !== celebrity) {
+                        resetParameters();
+                      }
                       setSelectedCelebrity(celebrity);
                       addLog(`Ünlü profili: ${celebrityLabels[celebrity]}`);
                     }}
@@ -1541,6 +1542,9 @@ export default function App() {
                     className={`chip wide ${selectedGenderMode === mode ? "selected" : ""}`}
                     key={mode}
                     onClick={() => {
+                      if (selectedGenderMode !== mode) {
+                        resetParameters();
+                      }
                       setSelectedGenderMode(mode);
                       addLog(`Cinsiyet modu: ${genderModeLabels[mode]}`);
                     }}
@@ -1556,19 +1560,22 @@ export default function App() {
 
           {activeModule === "emotion" ? (
             <div>
-              <div className="panel-title" style={{ marginTop: "10px" }}>Hedef Duygu</div>
+              <div className="panel-title" style={{ marginTop: "10px" }}>Hedef Dönüşüm</div>
               <div className="chip-row">
-                {(["sad", "angry", "excited", "whisper", "calm"] as EmotionKey[]).map((emotion) => (
+                {[...baseEmotionKeys, ...voiceEffectKeys].map((emotion) => (
                   <button
-                    className={`chip ${selectedEmotion === emotion ? `sel-${emotion}` : ""}`}
+                    className={`chip ${selectedEmotion === emotion ? `selected sel-${emotion}` : ""}`}
                     key={emotion}
                     onClick={() => {
+                      if (selectedEmotion !== emotion) {
+                        resetParameters();
+                      }
                       setSelectedEmotion(emotion);
-                      addLog(`Duygu hedefi: ${emotion}`);
+                      addLog(`Duygu hedefi: ${emotionLabels[emotion]}`);
                     }}
                     type="button"
                   >
-                    {emotion}
+                    {emotionLabels[emotion]}
                   </button>
                 ))}
               </div>
@@ -1576,25 +1583,6 @@ export default function App() {
             </div>
           ) : null}
         </div>
-
-        {outputPath ? (
-          <div className="quality-feedback">
-            <div className="panel-title">Kalite</div>
-            <div className="quality-grid">
-              {(Object.keys(qualityFeedbackLabels) as QualityFeedbackKey[]).map((feedback) => (
-                <button
-                  className={`quality-btn ${lastFeedback === feedback ? "selected" : ""}`}
-                  disabled={feedbackPending !== null}
-                  key={feedback}
-                  onClick={() => void sendQualityFeedback(feedback)}
-                  type="button"
-                >
-                  {feedbackPending === feedback ? "..." : qualityFeedbackLabels[feedback]}
-                </button>
-              ))}
-            </div>
-          </div>
-        ) : null}
 
         <div className="panel-live">
           <div className="panel-title">Canlı Mod</div>

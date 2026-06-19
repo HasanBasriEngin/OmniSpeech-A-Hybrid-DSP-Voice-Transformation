@@ -20,6 +20,13 @@ class BackendSettings(BaseModel):
     freevc_profiles_dir: str = Field(
         default_factory=lambda: os.getenv("OMNISPEECH_FREEVC_PROFILES_DIR", "models/freevc_profiles")
     )
+    openvoice_root: str | None = Field(default_factory=lambda: os.getenv("OMNISPEECH_OPENVOICE_ROOT") or None)
+    openvoice_checkpoints_dir: str | None = Field(
+        default_factory=lambda: os.getenv("OMNISPEECH_OPENVOICE_CHECKPOINTS_DIR") or None
+    )
+    openvoice_device: str = Field(
+        default_factory=lambda: os.getenv("OMNISPEECH_OPENVOICE_DEVICE", os.getenv("OMNISPEECH_RVC_DEVICE", "cpu"))
+    )
     dsp_profiles_dir: str = Field(default_factory=lambda: os.getenv("OMNISPEECH_DSP_PROFILES_DIR", "models/dsp_profiles"))
 
 
@@ -47,6 +54,9 @@ def load_settings() -> BackendSettings:
         freevc_assets_dir=os.getenv("OMNISPEECH_FREEVC_ASSETS_DIR", "models/hf/freevc-24"),
         freevc_device=os.getenv("OMNISPEECH_FREEVC_DEVICE", os.getenv("OMNISPEECH_RVC_DEVICE", "cpu")),
         freevc_profiles_dir=os.getenv("OMNISPEECH_FREEVC_PROFILES_DIR", "models/freevc_profiles"),
+        openvoice_root=os.getenv("OMNISPEECH_OPENVOICE_ROOT") or None,
+        openvoice_checkpoints_dir=os.getenv("OMNISPEECH_OPENVOICE_CHECKPOINTS_DIR") or None,
+        openvoice_device=os.getenv("OMNISPEECH_OPENVOICE_DEVICE", os.getenv("OMNISPEECH_RVC_DEVICE", "cpu")),
         dsp_profiles_dir=os.getenv("OMNISPEECH_DSP_PROFILES_DIR", "models/dsp_profiles"),
     )
 

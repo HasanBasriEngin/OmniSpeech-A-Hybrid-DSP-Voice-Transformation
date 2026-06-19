@@ -28,7 +28,21 @@ class DSPFeedbackResponse(BaseModel):
 
 class EmotionRequest(BaseModel):
     input_path: str
-    emotion: Literal["sad", "angry", "excited", "whisper", "calm"]
+    emotion: Literal[
+        "sad",
+        "angry",
+        "excited",
+        "whisper",
+        "calm",
+        "male_pitch",
+        "female_pitch",
+        "helium_pitch",
+        "baby_pitch",
+        "radio",
+        "robot",
+        "clone",
+        "custom_pitch",
+    ]
     pitch_override: float | None = None
     rate_override: float | None = None
     energy_override: float | None = None
@@ -65,8 +79,16 @@ class CelebrityRequest(BaseModel):
     output_path: str | None = None
 
 
+class VoiceCloneRequest(BaseModel):
+    input_path: str
+    reference_paths: list[str] = Field(default_factory=list)
+    celebrity: str | None = None
+    use_ai_engines: bool = True
+    output_path: str | None = None
+
+
 class LiveSessionStartRequest(BaseModel):
-    task: Literal["emotion", "gender_age", "speaker_clone", "singing", "celebrity"]
+    task: Literal["emotion", "gender_age", "speaker_clone", "singing", "celebrity", "voice_clone"]
     options: dict[str, object] = Field(default_factory=dict)
     route_to_virtual_mic: bool = False
     virtual_mic_device: str | None = None

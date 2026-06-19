@@ -9,17 +9,22 @@ import numpy as np
 import pytest
 import soundfile as sf
 
+from backend.audio.clownfish_presets import apply_clownfish_preset, effective_pitch_semitones
+from backend.audio import filtering as filtering_module
 from backend.audio.filtering import LiveVoicePostFilter, post_filter_voice
 from backend.audio.dsp_profiles import DSPProfileSettings, apply_user_feedback, get_dsp_profile_settings
 from backend.audio.dsp_metrics import measure_audio_health
 from backend.audio.dsp_quality import optimize_post_filter_quality
-from backend.audio.io import normalize_audio
+from backend.audio.features import extract_pitch_contour
+from backend.audio.io import default_output_path, normalize_audio
 from backend.audio.pure_dsp import merge_preserving_noise_regions, prepare_clean_speech
 from backend.audio.spectrogram_quality import analyze_spectrogram_quality
 from backend.audio.spectrogram_image import SpectrogramImageResult, preprocess_spectrogram_for_model
 from backend.audio.voice_analysis import analyze_pitch_confidence
 from backend.modules import emotion as emotion_module
+from backend.modules import celebrity_voice as celebrity_module
 from backend.modules import gender_age as gender_age_module
+from backend.modules import speaker_clone as speaker_clone_module
 from backend.modules import rvc_adapter
 from backend.modules.freevc_adapter import (
     FreeVCConversionResult,
@@ -31,6 +36,7 @@ from backend.modules.freevc_adapter import (
 from backend.modules.hf_voice_assets import import_hf_voice_assets, plan_hf_voice_asset_imports
 from backend.pipeline import processor as processor_module
 from backend.pipeline.processor import VoiceConversionPipeline
+from backend.services import clownfish as clownfish_service
 from backend.services.live_session import LiveOverlapCrossfader, LiveSessionManager
 from backend.tools.import_freevc_assets import import_freevc_assets
 
@@ -38,6 +44,12 @@ from backend.tools.import_freevc_assets import import_freevc_assets
 def _sine(sr: int = 22050, duration: float = 1.0) -> np.ndarray:
     t = np.linspace(0, duration, int(sr * duration), endpoint=False, dtype=np.float32)
     return (0.2 * np.sin(2 * np.pi * 220 * t)).astype(np.float32)
+
+
+def extract_nonzero_pitch(audio: np.ndarray, sr: int) -> np.ndarray:
+    contour = extract_pitch_contour(audio, sr)
+    voiced = contour[contour > 0]
+    return voiced if voiced.size else np.asarray([0.0], dtype=np.float32)
 
 
 def _workspace_tmp_dir(prefix: str) -> Path:
@@ -74,6 +86,11 @@ def _write_minimal_freevc_source(root: Path, *, variant: str = "freevc-24") -> N
     (root / checkpoint_relative).write_bytes(b"checkpoint")
 
 
+@pytest.fixture(autouse=True)
+def _disable_openvoice_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(processor_module, "clone_voice_with_openvoice", lambda *args, **kwargs: None)
+
+
 def test_gender_age_file_conversion():
     tmp_dir = _workspace_tmp_dir("gender")
     source = _sine()
@@ -91,6 +108,20 @@ def test_gender_age_file_conversion():
     assert result.metrics["processing_seconds"] >= 0.0
     assert result.metrics["rvc_engine"] == 0.0
     assert "opencv_spectrogram_applied" in result.metrics
+
+
+def test_default_output_path_keeps_repeated_conversions_unique():
+    tmp_dir = _workspace_tmp_dir("output_paths")
+    source_path = tmp_dir / "voice.wav"
+    source_path.write_bytes(b"source")
+
+    first = Path(default_output_path(str(source_path), "emotion_angry"))
+    first.write_bytes(b"converted")
+    second = Path(default_output_path(str(source_path), "emotion_angry"))
+
+    assert first.name == "voice_emotion_angry.wav"
+    assert second.name == "voice_emotion_angry_2.wav"
+    assert second != first
 
 
 def test_hf_voice_asset_plan_selects_rvc_freevc_and_wavlm():
@@ -190,6 +221,17 @@ def test_emotion_file_conversion():
     assert result.metrics["processing_seconds"] >= 0.0
 
 
+def test_emotion_file_rate_change_can_change_output_duration():
+    tmp_dir = _workspace_tmp_dir("emotion_rate_duration")
+    source_path = tmp_dir / "emotion_in.wav"
+    sf.write(str(source_path), _sine(duration=1.0), 22050)
+
+    pipeline = VoiceConversionPipeline(sample_rate=22050, dsp_profiles_dir=str(tmp_dir / "dsp_profiles"))
+    result = pipeline.convert_emotion_file(str(source_path), emotion="excited", use_ai_engines=False)
+
+    assert result.metrics["output_duration_seconds"] < result.metrics["input_duration_seconds"]
+
+
 def test_speaker_clone_file_prefers_freevc_when_assets_are_available(monkeypatch: pytest.MonkeyPatch):
     tmp_dir = _workspace_tmp_dir("freevc_speaker")
     source = _sine(duration=0.25)
@@ -229,6 +271,46 @@ def test_speaker_clone_file_prefers_freevc_when_assets_are_available(monkeypatch
     assert result.metrics["freevc_engine"] == 1.0
     assert result.metrics["reference_count"] == 1.0
     assert result.metrics["dsp_autotune_applied"] == 1.0
+    assert result.metrics["dsp_neural_safe_filter"] == 1.0
+
+
+def test_speaker_clone_file_prefers_openvoice_before_freevc(monkeypatch: pytest.MonkeyPatch):
+    tmp_dir = _workspace_tmp_dir("openvoice_speaker")
+    source = _sine(duration=0.25)
+    reference = _sine(duration=0.25) * 0.5
+    source_path = tmp_dir / "input.wav"
+    reference_path = tmp_dir / "reference.wav"
+    sf.write(str(source_path), source, 22050)
+    sf.write(str(reference_path), reference, 22050)
+
+    def fake_openvoice(
+        input_path: str,
+        reference_path_arg: str,
+        sample_rate: int,
+        **kwargs: object,
+    ) -> np.ndarray:
+        assert Path(input_path).name == "openvoice_source.wav"
+        assert Path(reference_path_arg).name == "openvoice_reference.wav"
+        assert Path(input_path).exists()
+        assert Path(reference_path_arg).exists()
+        assert sample_rate == 22050
+        assert kwargs["device"] == "cpu"
+        return np.asarray(source * 0.35, dtype=np.float32)
+
+    def fail_freevc(*args: object, **kwargs: object) -> None:
+        del args, kwargs
+        raise AssertionError("FreeVC should not run after OpenVoice succeeds")
+
+    monkeypatch.setattr(processor_module, "clone_voice_with_openvoice", fake_openvoice)
+    monkeypatch.setattr(processor_module, "convert_file_with_freevc", fail_freevc)
+
+    pipeline = VoiceConversionPipeline(sample_rate=22050, dsp_profiles_dir=str(tmp_dir / "dsp_profiles"))
+    result = pipeline.convert_speaker_clone_file(str(source_path), [str(reference_path)])
+
+    assert result.metrics["openvoice_engine"] == 1.0
+    assert result.metrics["openvoice_preprocess_applied"] == 1.0
+    assert result.metrics["freevc_engine"] == 0.0
+    assert result.metrics["reference_count"] == 1.0
     assert result.metrics["dsp_neural_safe_filter"] == 1.0
 
 
@@ -854,6 +936,73 @@ def test_celebrity_file_uses_rvc_lazily_when_registry_matches(monkeypatch: pytes
     ]
 
 
+def test_celebrity_file_uses_openvoice_reference_when_no_rvc(monkeypatch: pytest.MonkeyPatch):
+    tmp_dir = _workspace_tmp_dir("openvoice_celebrity")
+    source = _sine(duration=0.25)
+    source_path = tmp_dir / "input.wav"
+    reference_path = tmp_dir / "morgan.wav"
+    sf.write(str(source_path), source, 22050)
+    sf.write(str(reference_path), source * 0.6, 22050)
+
+    def fake_openvoice(
+        input_path: str,
+        reference_path_arg: str,
+        sample_rate: int,
+        **kwargs: object,
+    ) -> np.ndarray:
+        del kwargs
+        assert Path(input_path) == source_path
+        assert Path(reference_path_arg) == reference_path
+        assert sample_rate == 22050
+        return np.asarray(source * 0.4, dtype=np.float32)
+
+    monkeypatch.setattr(processor_module, "get_celebrity_reference_path", lambda celebrity: str(reference_path))
+    monkeypatch.setattr(processor_module, "clone_voice_with_openvoice", fake_openvoice)
+
+    pipeline = VoiceConversionPipeline(
+        sample_rate=22050,
+        rvc_models_dir=str(tmp_dir / "rvc"),
+        dsp_profiles_dir=str(tmp_dir / "dsp_profiles"),
+    )
+    result = pipeline.convert_celebrity_file(str(source_path), celebrity="morgan_freeman")
+
+    assert result.metrics["rvc_engine"] == 0.0
+    assert result.metrics["openvoice_engine"] == 1.0
+    assert result.metrics["openvoice_reference_available"] == 1.0
+
+
+def test_voice_clone_file_uses_openvoice_with_explicit_reference(monkeypatch: pytest.MonkeyPatch):
+    tmp_dir = _workspace_tmp_dir("openvoice_voice_clone")
+    source = _sine(duration=0.25)
+    reference = _sine(duration=0.25) * 0.5
+    source_path = tmp_dir / "input.wav"
+    reference_path = tmp_dir / "reference.wav"
+    sf.write(str(source_path), source, 22050)
+    sf.write(str(reference_path), reference, 22050)
+
+    def fake_openvoice(
+        input_path: str,
+        reference_path_arg: str,
+        sample_rate: int,
+        **kwargs: object,
+    ) -> np.ndarray:
+        del kwargs
+        assert Path(input_path) == source_path
+        assert Path(reference_path_arg) == reference_path
+        assert sample_rate == 22050
+        return np.asarray(source * 0.3, dtype=np.float32)
+
+    monkeypatch.setattr(processor_module, "clone_voice_with_openvoice", fake_openvoice)
+
+    pipeline = VoiceConversionPipeline(sample_rate=22050, dsp_profiles_dir=str(tmp_dir / "dsp_profiles"))
+    result = pipeline.convert_voice_clone_file(str(source_path), [str(reference_path)])
+
+    assert result.metrics["openvoice_engine"] == 1.0
+    assert result.metrics["freevc_engine"] == 0.0
+    assert result.metrics["reference_count"] == 1.0
+    assert result.metrics["openvoice_reference_available"] == 1.0
+
+
 def test_gender_age_file_can_force_pure_dsp_even_when_ai_profiles_exist(monkeypatch: pytest.MonkeyPatch):
     tmp_dir = _workspace_tmp_dir("pure_dsp_gender")
     source = _sine(duration=0.25)
@@ -1082,11 +1231,31 @@ def test_live_overlap_crossfader_softens_chunk_boundary():
     assert float(out_second[700]) < -0.35
 
 
+def test_angry_profile_avoids_brickwall_settings():
+    profile = emotion_module.EMOTION_PROFILES["angry"]
+
+    assert profile["target_rms"] <= 0.10
+    assert profile["max_rms"] <= 0.105
+    assert profile["drive"] <= 1.08
+    assert profile["rms_peak_ceiling"] <= 0.90
+
+
+def test_soft_knee_compressor_reduces_pre_limiter_peaks():
+    audio = np.array([-0.95, -0.82, -0.40, 0.0, 0.40, 0.82, 0.95], dtype=np.float32)
+
+    compressed = filtering_module._soft_knee_compress(audio, threshold=0.80, ratio=2.25, knee_width=0.16)
+
+    assert compressed.dtype == np.float32
+    assert np.all(np.isfinite(compressed))
+    assert float(np.max(np.abs(compressed))) < float(np.max(np.abs(audio)))
+    assert abs(float(compressed[2]) - float(audio[2])) < 1e-6
+
+
 def test_excited_profile_prioritizes_smooth_dsp():
     profile = emotion_module.EMOTION_PROFILES["excited"]
 
     assert profile["pitch_shift"] <= 1.25
-    assert profile["rate"] <= 1.04
+    assert 1.04 <= profile["rate"] <= 1.12
     assert profile["jitter"] == 0.0
     assert profile["vibrato_rate"] == 0.0
     assert profile["drive"] <= 1.04
@@ -1137,9 +1306,23 @@ def test_pure_dsp_clean_chain_removes_dc_and_limits_spikes():
     result = prepare_clean_speech(source, sr)
 
     assert result.metrics["pure_dsp_input_cleaned"] == 1.0
+    assert result.metrics["pure_dsp_silence_preserved"] == 1.0
     assert abs(float(np.mean(result.audio))) < abs(float(np.mean(source)))
     assert float(np.max(np.abs(result.audio))) <= 0.95
     assert result.metrics["pure_dsp_voiced_ratio"] > 0.0
+
+
+def test_pure_dsp_clean_chain_preserves_timing_and_quiet_regions():
+    sr = 22050
+    rng = np.random.default_rng(1234)
+    quiet = rng.normal(0.0, 0.002, sr // 5).astype(np.float32)
+    source = np.concatenate([quiet, _sine(sr=sr, duration=0.25), quiet])
+
+    result = prepare_clean_speech(source, sr)
+
+    assert result.audio.size == source.size
+    assert result.metrics["pure_dsp_silence_preserved"] == 1.0
+    assert float(np.sqrt(np.mean(result.audio[: quiet.size] ** 2))) > 0.0001
 
 
 def test_pure_dsp_merge_protects_silence_regions():
@@ -1268,6 +1451,96 @@ def test_gender_age_cepstral_formant_warp_keeps_finite_output():
     assert converted.dtype == np.float32
     assert np.all(np.isfinite(converted))
     assert converted.size > 0
+
+
+def test_speaker_clone_moves_pitch_toward_reference_without_overdoing_it():
+    sr = 22050
+    source = _sine(sr=sr, duration=0.45)
+    t = np.linspace(0, 0.45, int(sr * 0.45), endpoint=False, dtype=np.float32)
+    reference = (0.2 * np.sin(2 * np.pi * 330 * t)).astype(np.float32)
+
+    converted = speaker_clone_module.clone_speaker(source, sr, [reference])
+    source_f0 = np.median(extract_nonzero_pitch(source, sr))
+    converted_f0 = np.median(extract_nonzero_pitch(converted, sr))
+
+    assert converted.dtype == np.float32
+    assert np.all(np.isfinite(converted))
+    assert converted.size == source.size
+    assert converted_f0 > source_f0
+    assert converted_f0 < 330.0
+
+
+def test_singing_file_can_keep_natural_extended_duration():
+    tmp_dir = _workspace_tmp_dir("singing_duration")
+    source_path = tmp_dir / "singing_in.wav"
+    sf.write(str(source_path), _sine(duration=1.0), 22050)
+
+    pipeline = VoiceConversionPipeline(sample_rate=22050, dsp_profiles_dir=str(tmp_dir / "dsp_profiles"))
+    result = pipeline.convert_singing_file(str(source_path), midi_path=None, pitch_contour=[260.0], use_ai_engines=False)
+
+    assert result.metrics["output_duration_seconds"] > result.metrics["input_duration_seconds"]
+
+
+def test_celebrity_profile_keeps_simple_controlled_voice_shape():
+    converted = celebrity_module.convert_celebrity(_sine(duration=0.45), 22050, "morgan_freeman")
+
+    assert converted.dtype == np.float32
+    assert np.all(np.isfinite(converted))
+    assert converted.size > 0
+    assert float(np.max(np.abs(converted))) <= 0.93
+
+
+def test_clownfish_style_preset_keeps_finite_output():
+    converted = apply_clownfish_preset(_sine(duration=0.35), 22050, "female_pitch")
+
+    assert converted.dtype == np.float32
+    assert np.all(np.isfinite(converted))
+    assert converted.size > 0
+    assert float(np.max(np.abs(converted))) <= 0.93
+
+
+def test_pipeline_applies_clownfish_custom_pitch_metrics():
+    tmp_dir = _workspace_tmp_dir("clownfish_pipeline")
+    source_path = tmp_dir / "input.wav"
+    sf.write(str(source_path), _sine(duration=0.35), 22050)
+
+    pipeline = VoiceConversionPipeline(
+        sample_rate=22050,
+        rvc_models_dir=str(tmp_dir / "rvc"),
+        dsp_profiles_dir=str(tmp_dir / "dsp_profiles"),
+    )
+    result = pipeline.convert_gender_age_file(
+        str(source_path),
+        mode="male_to_female",
+        use_ai_engines=False,
+        clownfish_preset="custom_pitch",
+        clownfish_pitch=3.5,
+    )
+
+    assert result.metrics["clownfish_style_applied"] == 1.0
+    assert result.metrics["clownfish_effect_id"] == 13.0
+    assert result.metrics["clownfish_pitch_semitones"] == 3.5
+
+
+def test_clownfish_api_wrapper_applies_custom_pitch(monkeypatch: pytest.MonkeyPatch):
+    calls: list[tuple[str, float | bool]] = []
+
+    def fake_enabled(enabled: bool) -> clownfish_service.ClownfishCommandResult:
+        calls.append(("enabled", enabled))
+        return clownfish_service.ClownfishCommandResult(True, True, True, f"2|{1 if enabled else 0}", "ok")
+
+    def fake_pitch(pitch: float) -> clownfish_service.ClownfishCommandResult:
+        calls.append(("pitch", pitch))
+        return clownfish_service.ClownfishCommandResult(True, True, True, f"3|13|{pitch:.2f}", "ok")
+
+    monkeypatch.setattr(clownfish_service, "set_enabled", fake_enabled)
+    monkeypatch.setattr(clownfish_service, "set_custom_pitch", fake_pitch)
+
+    result = clownfish_service.apply_preset("custom_pitch", custom_pitch=4.25)
+
+    assert result.command_sent is True
+    assert effective_pitch_semitones("custom_pitch", 4.25) == 4.25
+    assert calls == [("enabled", True), ("pitch", 4.25)]
 
 
 def test_live_chunk_processing_without_virtual_mic():

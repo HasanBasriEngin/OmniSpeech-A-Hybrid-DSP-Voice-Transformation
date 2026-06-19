@@ -22,7 +22,7 @@ class DSPProfileSettings:
     spectral_tilt_db: float = 0.0
     transform_intensity: float = 1.0
     formant_smoothing: float = 1.0
-    use_noisereduce: bool = True
+    use_noisereduce: bool = False
     use_pedalboard: bool = True
 
     def as_filter_settings(self) -> dict[str, object]:
